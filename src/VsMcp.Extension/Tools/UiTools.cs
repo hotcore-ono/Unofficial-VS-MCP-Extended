@@ -419,7 +419,7 @@ namespace VsMcp.Extension.Tools
         /// Captures the full window bitmap. Tries WGC first (works even when
         /// the window is covered), falls back to PrintWindow.
         /// </summary>
-        private static async Task<Bitmap> CaptureWindowBitmapAsync(IntPtr hwnd)
+        internal static async Task<Bitmap> CaptureWindowBitmapAsync(IntPtr hwnd)
         {
             // Try Windows.Graphics.Capture first
             if (WgcCaptureHelper.IsSupported)
@@ -490,7 +490,7 @@ namespace VsMcp.Extension.Tools
             return resized;
         }
 
-        private static (string base64, string mimeType) BitmapToBase64WithMime(Bitmap bitmap)
+        internal static (string base64, string mimeType) BitmapToBase64WithMime(Bitmap bitmap)
         {
             using (var resized = ResizeIfNeeded(bitmap))
             {

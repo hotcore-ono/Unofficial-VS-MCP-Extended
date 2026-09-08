@@ -116,6 +116,7 @@ namespace VsMcp.Extension.Tools
             { "ui_wait_for_element", "UI" },
             { "ui_wait_idle", "UI" },
             { "ui_list_windows", "UI" }, // Extended
+            { "ui_capture_window_by_handle", "UI" }, // Extended
             // Console
             { "console_read", "Console" },
             { "console_send", "Console" },
