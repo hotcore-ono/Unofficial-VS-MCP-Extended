@@ -15,8 +15,13 @@
         <Button x:Name="OpenOwnerlessDialogButton"
                 AutomationProperties.AutomationId="OpenOwnerlessDialogButton"
                 Content="Owner なし ShowDialog() を開く"
-                Width="280" Height="36"
+                Width="280" Height="36" Margin="0,0,0,12"
                 Click="OnOpenOwnerlessDialogClick" />
+        <Button x:Name="OpenDuplicateWindowsButton"
+                AutomationProperties.AutomationId="OpenDuplicateWindowsButton"
+                Content="同一タイトルの Window を 2 つ Show() で開く"
+                Width="280" Height="36"
+                Click="OnOpenDuplicateWindowsClick" />
         <local:ChildWindowHost x:Name="ChildHost" Width="280" Height="24" Margin="0,12,0,0" />
     </StackPanel>
 </Window>
