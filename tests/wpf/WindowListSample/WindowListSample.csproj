@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ui_list_windows 検証用の最小 WPF アプリ（Extended 独自・本体ソリューションには含めない） -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>WindowListSample</RootNamespace>
+    <AssemblyName>WindowListSample</AssemblyName>
+  </PropertyGroup>
+
+</Project>
