@@ -29,5 +29,17 @@ namespace WindowListSample
             SampleDialog TheDialog = new SampleDialog("Sample Dialog (Ownerless)");
             TheDialog.ShowDialog();
         }
+
+        /// <summary>同じタイトルの非モーダル Window を 2 つ Show() で開く（ui_capture_window_by_title の複数候補解決の検証用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnOpenDuplicateWindowsClick(object InSender, RoutedEventArgs InArgs)
+        {
+            for (int TheIndex = 0; TheIndex < 2; TheIndex++)
+            {
+                SampleDialog TheWindow = new SampleDialog("Duplicate Window");
+                TheWindow.Show();
+            }
+        }
     }
 }

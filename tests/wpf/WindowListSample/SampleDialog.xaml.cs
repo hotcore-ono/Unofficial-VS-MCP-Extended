@@ -14,12 +14,16 @@ namespace WindowListSample
             DescriptionText.Text = InTitle;
         }
 
-        /// <summary>閉じるボタン。DialogResult を true にして閉じる。</summary>
+        /// <summary>閉じるボタン。ShowDialog で開かれていれば DialogResult を true にして閉じ、Show() で開かれていれば単に閉じる。</summary>
         /// <param name="InSender">イベント送信元。</param>
         /// <param name="InArgs">イベント引数。</param>
         private void OnCloseClick(object InSender, RoutedEventArgs InArgs)
         {
-            DialogResult = true;
+            // 非モーダル（Show）で開いた Window に DialogResult を設定すると InvalidOperationException になる
+            if (System.Windows.Interop.ComponentDispatcher.IsThreadModal)
+                DialogResult = true;
+            else
+                Close();
         }
     }
 }
