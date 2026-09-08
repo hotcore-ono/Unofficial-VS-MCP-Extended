@@ -223,4 +223,28 @@ internal static extern uint MapVirtualKey(uint uCode, uint uMapType);
     internal const uint GW_OWNER = 4;
     internal const uint GA_ROOT = 2;
     internal const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    // ------------------------------------------------------------------
+    // Extended additions (Phase 4): アクティブウィンドウ解決（DebuggeeWindowResolver）で使う GetGUIThreadInfo。
+    // フォアグラウンドが Visual Studio 等に移っていても、デバッグ対象 GUI スレッドのアクティブウィンドウを得るために使う。
+    // ------------------------------------------------------------------
+
+    /// <summary>GetGUIThreadInfo の出力。hwndActive がそのスレッドのアクティブウィンドウ（スレッドがフォアグラウンドでなくても保持される）。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GUITHREADINFO
+    {
+        public uint cbSize;
+        public uint flags;
+        public IntPtr hwndActive;
+        public IntPtr hwndFocus;
+        public IntPtr hwndCapture;
+        public IntPtr hwndMenuOwner;
+        public IntPtr hwndMoveSize;
+        public IntPtr hwndCaret;
+        public RECT rcCaret;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
 }

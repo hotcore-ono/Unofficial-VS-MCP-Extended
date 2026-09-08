@@ -118,6 +118,10 @@ namespace VsMcp.Extension.Tools
             { "ui_list_windows", "UI" }, // Extended
             { "ui_capture_window_by_handle", "UI" }, // Extended
             { "ui_capture_window_by_title", "UI" }, // Extended
+            { "ui_get_active_window", "UI" }, // Extended
+            { "ui_capture_active_window", "UI" }, // Extended
+            { "ui_wait_for_window", "UI" }, // Extended
+            { "ui_wait_for_window_closed", "UI" }, // Extended
             // Console
             { "console_read", "Console" },
             { "console_send", "Console" },
