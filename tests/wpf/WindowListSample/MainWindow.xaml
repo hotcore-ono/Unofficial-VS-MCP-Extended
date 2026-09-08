@@ -1,0 +1,20 @@
+<Window x:Class="WindowListSample.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WindowListSample Main"
+        Width="640" Height="400"
+        WindowStartupLocation="CenterScreen">
+    <StackPanel Margin="24" VerticalAlignment="Center" HorizontalAlignment="Center">
+        <TextBlock Text="ui_list_windows 検証用" FontSize="18" Margin="0,0,0,16" />
+        <Button x:Name="OpenOwnedDialogButton"
+                AutomationProperties.AutomationId="OpenOwnedDialogButton"
+                Content="Owner 付き ShowDialog() を開く"
+                Width="280" Height="36" Margin="0,0,0,12"
+                Click="OnOpenOwnedDialogClick" />
+        <Button x:Name="OpenOwnerlessDialogButton"
+                AutomationProperties.AutomationId="OpenOwnerlessDialogButton"
+                Content="Owner なし ShowDialog() を開く"
+                Width="280" Height="36"
+                Click="OnOpenOwnerlessDialogClick" />
+    </StackPanel>
+</Window>
