@@ -1,6 +1,7 @@
 <Window x:Class="WindowListSample.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:WindowListSample"
         Title="WindowListSample Main"
         Width="640" Height="400"
         WindowStartupLocation="CenterScreen">
@@ -16,5 +17,6 @@
                 Content="Owner なし ShowDialog() を開く"
                 Width="280" Height="36"
                 Click="OnOpenOwnerlessDialogClick" />
+        <local:ChildWindowHost x:Name="ChildHost" Width="280" Height="24" Margin="0,12,0,0" />
     </StackPanel>
 </Window>
