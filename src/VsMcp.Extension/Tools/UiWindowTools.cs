@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using EnvDTE80;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using VsMcp.Extension.McpServer;
 using VsMcp.Extension.Services;
@@ -56,11 +57,29 @@ namespace VsMcp.Extension.Tools
                         .AddInteger("handle", "HWND of the window to capture (decimal, as returned by ui_list_windows 'handle')", required: true)
                         .Build()),
                 InArgs => UiCaptureWindowByHandleAsync(InAccessor, InArgs));
+
+            InRegistry.Register(
+                new McpToolDefinition(
+                    "ui_capture_window_by_title",
+                    "[Windows UIA — desktop app being debugged] Capture a screenshot of one visible top-level window of the debugged application located by its title " +
+                    "(e.g. a modal dialog, MessageBox or any owned window). Searches the visible top-level windows of every process being debugged with the same " +
+                    "title matching as ui_list_windows, then resolves ambiguity deterministically: a single match is used; if several windows match, the foreground " +
+                    "window wins; otherwise the only visible-and-enabled one wins; if it is still ambiguous nothing is captured and the error text lists the candidates " +
+                    "(with their HWNDs) so you can pick one with ui_capture_window_by_handle. The resolved window then passes the same safety checks " +
+                    "(IsWindow, GetAncestor(GA_ROOT), debugged-process re-check, not minimized) and the same capture pipeline as ui_capture_window_by_handle. " +
+                    "Returns a text content (requestedTitle, titleMatch, resolvedHandle, resolutionReason, normalizedHandle, window info incl. isModalCandidate, " +
+                    "originalWidth/originalHeight, mimeType) followed by the image content. For web pages use web_screenshot.",
+                    SchemaBuilder.Create()
+                        .AddString("title", "Window title to look for (compared with the 'title' value returned by ui_list_windows)", required: true)
+                        .AddEnum("titleMatch", "Match mode for 'title': 'exact' (default, case-sensitive), 'contains' (case-insensitive substring), 'regex' (case-insensitive)",
+                            new[] { "exact", "contains", "regex" })
+                        .Build()),
+                InArgs => UiCaptureWindowByTitleAsync(InAccessor, InArgs));
         }
 
         /// <summary>
-        /// ui_capture_window_by_handle の本体。HWND を検証・正規化し、デバッグ対象プロセスに属することを再照合してから
-        /// 既存の UiTools キャプチャ経路（WGC → PrintWindow → PNG/JPEG）へ渡す。キャプチャ本体は再実装しない。
+        /// ui_capture_window_by_handle の本体。引数の HWND を範囲検証したうえで、共通キャプチャ経路
+        /// <see cref="CaptureTopLevelWindowAsync"/> へ渡す。
         /// </summary>
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         /// <param name="InArgs">ツール引数（handle）。</param>
@@ -79,11 +98,132 @@ namespace VsMcp.Extension.Tools
                 return McpToolResult.Error($"Window handle {TheRequestedHandle.Value} is out of range for a window handle.");
             }
 
-            IntPtr TheRequested = new IntPtr(TheRequestedHandle.Value);
+            JObject TheResolution = new JObject
+            {
+                ["requestedHandle"] = TheRequestedHandle.Value,
+            };
+            return await CaptureTopLevelWindowAsync(InAccessor, TheRequestedHandle.Value, TheResolution);
+        }
 
-            // 1. 有効性: ui_list_windows 取得後に閉じられた／再利用された HWND を弾く
+        /// <summary>
+        /// ui_capture_window_by_title の本体。デバッグ対象の可視トップレベルウィンドウをタイトルで検索し、
+        /// 候補を「単一一致 → フォアグラウンド → 可視かつ有効」の順で一意に解決できた場合だけ共通キャプチャ経路へ渡す。
+        /// 一意に決められない場合は候補一覧付きのエラーを返し、ui_capture_window_by_handle での明示指定へ誘導する。
+        /// </summary>
+        /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
+        /// <param name="InArgs">ツール引数（title, titleMatch）。</param>
+        /// <returns>text（タイトル解決情報・ウィンドウ情報・画像メタ情報）+ image、またはエラー。</returns>
+        private static async Task<McpToolResult> UiCaptureWindowByTitleAsync(VsServiceAccessor InAccessor, JObject InArgs)
+        {
+            string TheTitle = InArgs.Value<string>("title");
+            if (string.IsNullOrEmpty(TheTitle))
+                return McpToolResult.Error("Parameter 'title' is required (the window title as returned by ui_list_windows)");
+
+            string TheTitleMatch = (InArgs.Value<string>("titleMatch") ?? "exact").ToLowerInvariant();
+            if (TheTitleMatch != "exact" && TheTitleMatch != "contains" && TheTitleMatch != "regex")
+                return McpToolResult.Error($"Unknown titleMatch: '{TheTitleMatch}'. Expected one of: exact, contains, regex");
+
+            Regex TheTitleRegex = null;
+            if (TheTitleMatch == "regex")
+            {
+                try
+                {
+                    TheTitleRegex = new Regex(TheTitle, RegexOptions.IgnoreCase);
+                }
+                catch (ArgumentException TheException)
+                {
+                    return McpToolResult.Error($"Invalid regex: {TheException.Message}");
+                }
+            }
+
+            HashSet<uint> TheProcessIds = await GetDebuggedProcessIdsAsync(InAccessor);
+            if (TheProcessIds.Count == 0)
+                return McpToolResult.Error("No debugged process found. Make sure debugging is active.");
+
+            // キャプチャ対象は画面表示中のウィンドウなので、非表示ウィンドウは検索対象に含めない
+            List<WindowInfo> TheCandidates = await Task.Run(() =>
+                DebuggeeWindowEnumerator.EnumerateTopLevelWindows(TheProcessIds, false)
+                    .Where(TheWindow => IsTitleMatched(TheWindow.Title, TheTitle, TheTitleMatch, TheTitleRegex))
+                    .ToList());
+
+            string TheMatchDescription = TheTitleMatch == "exact"
+                ? $"title \"{TheTitle}\""
+                : $"title \"{TheTitle}\" (titleMatch: {TheTitleMatch})";
+            if (TheCandidates.Count == 0)
+                return McpToolResult.Error($"No debugged window matched {TheMatchDescription}.");
+
+            WindowInfo TheResolved;
+            string TheResolutionReason;
+            if (TheCandidates.Count == 1)
+            {
+                TheResolved = TheCandidates[0];
+                TheResolutionReason = "singleMatch";
+            }
+            else
+            {
+                // 複数一致: フォアグラウンド → 可視かつ有効 の順で 1 件に絞れた場合だけ採用し、それ以外は自動選択しない
+                List<WindowInfo> TheForegroundCandidates = TheCandidates.Where(TheWindow => TheWindow.IsForeground).ToList();
+                List<WindowInfo> TheEnabledVisibleCandidates = TheCandidates.Where(TheWindow => TheWindow.IsVisible && TheWindow.IsEnabled).ToList();
+                if (TheForegroundCandidates.Count == 1)
+                {
+                    TheResolved = TheForegroundCandidates[0];
+                    TheResolutionReason = "foregroundMatch";
+                }
+                else if (TheEnabledVisibleCandidates.Count == 1)
+                {
+                    TheResolved = TheEnabledVisibleCandidates[0];
+                    TheResolutionReason = "enabledVisibleMatch";
+                }
+                else
+                {
+                    return McpToolResult.Error(
+                        $"{TheCandidates.Count} debugged windows matched {TheMatchDescription} and none could be selected unambiguously " +
+                        $"(foreground: {TheForegroundCandidates.Count}, visible and enabled: {TheEnabledVisibleCandidates.Count}). " +
+                        "Pick one and call ui_capture_window_by_handle with its 'handle'. Candidates:\n" +
+                        JsonConvert.SerializeObject(TheCandidates, Formatting.Indented));
+                }
+            }
+
+            JObject TheResolution = new JObject
+            {
+                ["requestedTitle"] = TheTitle,
+                ["titleMatch"] = TheTitleMatch,
+                ["resolvedHandle"] = TheResolved.Handle,
+                ["resolutionReason"] = TheResolutionReason,
+            };
+            // 検索からキャプチャまでの間にウィンドウが閉じられる競合に備え、共通経路で IsWindow / PID 再照合をやり直す
+            return await CaptureTopLevelWindowAsync(InAccessor, TheResolved.Handle, TheResolution);
+        }
+
+        /// <summary>デバッグ中の全プロセス ID を取得する。DTE は UI スレッドでのみ触る（既存 UiTools.GetDebuggeeProcessId と同じ流儀）。</summary>
+        /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
+        /// <returns>デバッグ中プロセス ID の集合。デバッグ中でなければ空。</returns>
+        private static Task<HashSet<uint>> GetDebuggedProcessIdsAsync(VsServiceAccessor InAccessor)
+        {
+            return InAccessor.RunOnUIThreadAsync(() =>
+            {
+                DTE2 TheDte = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
+                    .Run(() => InAccessor.GetDteAsync());
+                return DebuggeeWindowEnumerator.GetDebuggedProcessIds(TheDte);
+            });
+        }
+
+        /// <summary>
+        /// by_handle / by_title 共通のキャプチャ経路。IsWindow → GetAncestor(GA_ROOT) 正規化 → デバッグ対象 PID 再照合 → IsIconic →
+        /// WindowInfo 取得 → 既存 UiTools キャプチャ（WGC → PrintWindow → PNG/JPEG）の順に処理し、text + image を返す。
+        /// キャプチャ本体は再実装しない。
+        /// </summary>
+        /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
+        /// <param name="InHandle">キャプチャ対象の HWND（範囲検証済み。子 HWND でもよい）。</param>
+        /// <param name="InResolution">text の先頭に置く解決情報（requestedHandle、または requestedTitle / titleMatch / resolvedHandle / resolutionReason）。</param>
+        /// <returns>text（解決情報 + normalizedHandle + window + 画像メタ情報）+ image、またはエラー。</returns>
+        private static async Task<McpToolResult> CaptureTopLevelWindowAsync(VsServiceAccessor InAccessor, long InHandle, JObject InResolution)
+        {
+            IntPtr TheRequested = new IntPtr(InHandle);
+
+            // 1. 有効性: ui_list_windows やタイトル検索の後に閉じられた／再利用された HWND を弾く
             if (!NativeMethods.IsWindow(TheRequested))
-                return McpToolResult.Error($"Window handle {TheRequestedHandle.Value} is not a valid window.");
+                return McpToolResult.Error($"Window handle {InHandle} is not a valid window.");
 
             // 2. 子 HWND が渡された場合はトップレベルへ正規化する
             IntPtr TheNormalized = NativeMethods.GetAncestor(TheRequested, NativeMethods.GA_ROOT);
@@ -92,12 +232,7 @@ namespace VsMcp.Extension.Tools
             long TheNormalizedHandle = TheNormalized.ToInt64();
 
             // 3. 正規化後の HWND がデバッグ対象プロセスに属することを再照合する（他アプリ・VS 本体の撮影を防ぐ安全境界）
-            HashSet<uint> TheProcessIds = await InAccessor.RunOnUIThreadAsync(() =>
-            {
-                DTE2 TheDte = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
-                    .Run(() => InAccessor.GetDteAsync());
-                return DebuggeeWindowEnumerator.GetDebuggedProcessIds(TheDte);
-            });
+            HashSet<uint> TheProcessIds = await GetDebuggedProcessIdsAsync(InAccessor);
             if (TheProcessIds.Count == 0)
                 return McpToolResult.Error("No debugged process found. Make sure debugging is active.");
 
@@ -127,17 +262,16 @@ namespace VsMcp.Extension.Tools
                 int TheOriginalHeight = TheBitmap.Height;
                 (string TheBase64, string TheMimeType) = UiTools.BitmapToBase64WithMime(TheBitmap);
 
-                string TheText = Newtonsoft.Json.JsonConvert.SerializeObject(new
+                JObject TheText = new JObject(InResolution)
                 {
-                    requestedHandle = TheRequestedHandle.Value,
-                    normalizedHandle = TheNormalizedHandle,
-                    window = TheWindow,
-                    originalWidth = TheOriginalWidth,
-                    originalHeight = TheOriginalHeight,
-                    mimeType = TheMimeType,
-                }, Newtonsoft.Json.Formatting.Indented);
+                    ["normalizedHandle"] = TheNormalizedHandle,
+                    ["window"] = JObject.FromObject(TheWindow),
+                    ["originalWidth"] = TheOriginalWidth,
+                    ["originalHeight"] = TheOriginalHeight,
+                    ["mimeType"] = TheMimeType,
+                };
 
-                McpToolResult TheResult = McpToolResult.Success(TheText);
+                McpToolResult TheResult = McpToolResult.Success(TheText.ToString(Formatting.Indented));
                 TheResult.Content.Add(new McpContent { Type = "image", Data = TheBase64, MimeType = TheMimeType });
                 return TheResult;
             }
@@ -174,14 +308,7 @@ namespace VsMcp.Extension.Tools
                 }
             }
 
-            // DTE は UI スレッドでのみ触る（既存 UiTools.GetDebuggeeProcessId と同じ流儀）
-            HashSet<uint> TheProcessIds = await InAccessor.RunOnUIThreadAsync(() =>
-            {
-                DTE2 TheDte = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
-                    .Run(() => InAccessor.GetDteAsync());
-                return DebuggeeWindowEnumerator.GetDebuggedProcessIds(TheDte);
-            });
-
+            HashSet<uint> TheProcessIds = await GetDebuggedProcessIdsAsync(InAccessor);
             if (TheProcessIds.Count == 0)
                 return McpToolResult.Error("No debugged process found. Make sure debugging is active.");
 
