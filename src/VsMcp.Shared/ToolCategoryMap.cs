@@ -114,6 +114,7 @@ namespace VsMcp.Shared
             { "ui_set_value", "UI" },
             { "ui_invoke", "UI" },
             { "ui_send_keys", "UI" },
+            { "ui_list_windows", "UI" }, // Extended
             // Console
             { "console_read", "Console" },
             { "console_send", "Console" },
