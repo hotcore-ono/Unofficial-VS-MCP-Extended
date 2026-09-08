@@ -50,11 +50,22 @@ namespace VsMcp.Extension.Tools
         public long OwnerHandle { get; set; }
 
         /// <summary>
-        /// モーダルダイアログ「候補」の推定値。Owner が存在し、その Owner が無効化されていることを主条件とする。
-        /// 推測であり、モーダルであることを断定する値ではない。
+        /// モーダルダイアログ「候補」の推定値。推測であり、モーダルであることを断定する値ではない。
+        /// 根拠は <see cref="ModalCandidateReason"/> を参照。
         /// </summary>
         [JsonProperty("isModalCandidate")]
         public bool IsModalCandidate { get; set; }
+
+        /// <summary>
+        /// IsModalCandidate の根拠。"ownerDisabled"（Owner が無効化されている）、
+        /// "siblingDisabled"（同一スレッドの Owner なし可視ウィンドウが無効化されている）、候補でない場合は null。
+        /// </summary>
+        [JsonProperty("modalCandidateReason")]
+        public string ModalCandidateReason { get; set; }
+
+        /// <summary>ウィンドウを作成したスレッド ID。モーダル候補判定（同一スレッド判定）専用で JSON には出さない。</summary>
+        [JsonIgnore]
+        public uint ThreadId { get; set; }
 
         /// <summary>
         /// ウィンドウ矩形 "x,y,width,height"。スクリーン座標系の物理ピクセルで、
