@@ -21,6 +21,12 @@ namespace VsMcp.Extension.Tools
         /// <summary>GetClassNameW に渡すバッファ長。クラス名は最大 256 文字。</summary>
         private const int ClassNameBufferLength = 256;
 
+        /// <summary>モーダル候補の根拠: Owner が無効化されている。</summary>
+        private const string ModalReasonOwnerDisabled = "ownerDisabled";
+
+        /// <summary>モーダル候補の根拠: 同一スレッドの Owner なし可視ウィンドウが無効化されている。</summary>
+        private const string ModalReasonSiblingDisabled = "siblingDisabled";
+
         /// <summary>
         /// Visual Studio が現在デバッグしている全プロセスの PID を返す。
         /// DTE の COM オブジェクトへ触るため、呼び出し側が UI スレッド上で実行すること。
@@ -69,11 +75,12 @@ namespace VsMcp.Extension.Tools
 
             IntPtr TheForegroundHandle = GetForegroundWindow();
 
+            // 1 パス目: 列挙して WindowInfo を組み立てる（モーダル候補は全件が揃った 2 パス目で判定する）
             EnumWindows((TheHandle, TheLParam) =>
             {
                 try
                 {
-                    GetWindowThreadProcessId(TheHandle, out uint TheProcessId);
+                    uint TheThreadId = GetWindowThreadProcessId(TheHandle, out uint TheProcessId);
                     if (!InProcessIds.Contains(TheProcessId))
                         return true;
 
@@ -81,7 +88,7 @@ namespace VsMcp.Extension.Tools
                     if (!TheIsVisible && !InIsInvisibleIncluded)
                         return true;
 
-                    TheWindows.Add(BuildWindowInfo(TheHandle, TheProcessId, TheIsVisible, TheForegroundHandle));
+                    TheWindows.Add(BuildWindowInfo(TheHandle, TheProcessId, TheThreadId, TheIsVisible, TheForegroundHandle));
                 }
                 catch
                 {
@@ -90,20 +97,21 @@ namespace VsMcp.Extension.Tools
                 return true;
             }, IntPtr.Zero);
 
+            // 2 パス目: 全ウィンドウを見渡してモーダル候補を決める
+            DetermineModalCandidates(TheWindows);
+
             return TheWindows;
         }
 
-        /// <summary>1 つの HWND から <see cref="WindowInfo"/> を組み立てる。</summary>
+        /// <summary>1 つの HWND から <see cref="WindowInfo"/> を組み立てる。モーダル候補は未判定（false）のまま返す。</summary>
         /// <param name="InHandle">対象ウィンドウの HWND。</param>
         /// <param name="InProcessId">対象ウィンドウのプロセス ID（取得済みの値を再利用する）。</param>
+        /// <param name="InThreadId">対象ウィンドウを作成したスレッド ID（取得済みの値を再利用する）。</param>
         /// <param name="InIsVisible">IsWindowVisible の結果（取得済みの値を再利用する）。</param>
         /// <param name="InForegroundHandle">列挙開始時点のフォアグラウンドウィンドウ。</param>
         /// <returns>組み立てた WindowInfo。</returns>
-        private static WindowInfo BuildWindowInfo(IntPtr InHandle, uint InProcessId, bool InIsVisible, IntPtr InForegroundHandle)
+        private static WindowInfo BuildWindowInfo(IntPtr InHandle, uint InProcessId, uint InThreadId, bool InIsVisible, IntPtr InForegroundHandle)
         {
-            IntPtr TheOwnerHandle = GetWindow(InHandle, GW_OWNER);
-            bool TheIsEnabled = IsWindowEnabled(InHandle);
-
             return new WindowInfo
             {
                 Handle = InHandle.ToInt64(),
@@ -111,12 +119,12 @@ namespace VsMcp.Extension.Tools
                 Title = GetWindowTitle(InHandle),
                 ClassName = GetWindowClassName(InHandle),
                 ProcessId = InProcessId,
+                ThreadId = InThreadId,
                 IsVisible = InIsVisible,
-                IsEnabled = TheIsEnabled,
+                IsEnabled = IsWindowEnabled(InHandle),
                 IsMinimized = IsIconic(InHandle),
                 IsForeground = InHandle == InForegroundHandle,
-                OwnerHandle = TheOwnerHandle.ToInt64(),
-                IsModalCandidate = DetermineIsModalCandidate(TheOwnerHandle, InIsVisible, TheIsEnabled),
+                OwnerHandle = GetWindow(InHandle, GW_OWNER).ToInt64(),
                 Bounds = GetBoundsText(InHandle),
                 Dpi = GetWindowDpi(InHandle),
                 Monitor = GetMonitorDeviceName(InHandle),
@@ -124,22 +132,47 @@ namespace VsMcp.Extension.Tools
         }
 
         /// <summary>
-        /// モーダルダイアログ候補かどうかを推定する。断定ではなく候補判定。
-        /// 主条件: Owner が存在し、その Owner が無効化（IsWindowEnabled=false）されている（WPF ShowDialog / MessageBox / TaskDialog の典型）。
-        /// 併せて対象自身が可視かつ有効であることを要求し、Owner 側や隠しウィンドウを候補から外す。
-        /// クラス名 #32770 や WS_EX_DLGMODALFRAME は単独では判定に使わない（モードレスの標準ダイアログも同じ特徴を持つため）。
+        /// 2 パス目。全トップレベルウィンドウを見渡してモーダルダイアログ候補を決める。断定ではなく候補判定。
+        /// 自身が可視かつ有効であることを前提に、次のいずれかを満たせば候補とする。
+        ///  A. Owner があり、その Owner が無効化されている（Owner 付き ShowDialog / MessageBox / TaskDialog の典型）
+        ///  B. Owner がなく、同一プロセス・同一スレッドに「可視・Owner なし・無効」のトップレベルウィンドウがある
+        ///     （WPF の Owner なし ShowDialog は EnableThreadWindows でスレッド上の他ウィンドウを無効化するが、Win32 の Owner は付かない）
+        /// クラス名 #32770 や拡張スタイルは単独では判定に使わない（モードレスの標準ダイアログも同じ特徴を持つため）。
         /// </summary>
-        /// <param name="InOwnerHandle">Owner ウィンドウの HWND。無い場合は IntPtr.Zero。</param>
-        /// <param name="InIsVisible">対象ウィンドウが可視か。</param>
-        /// <param name="InIsEnabled">対象ウィンドウが有効か。</param>
-        /// <returns>候補なら true。</returns>
-        private static bool DetermineIsModalCandidate(IntPtr InOwnerHandle, bool InIsVisible, bool InIsEnabled)
+        /// <param name="InOutWindows">1 パス目で組み立てたウィンドウ一覧。各要素の IsModalCandidate / ModalCandidateReason を更新する。</param>
+        private static void DetermineModalCandidates(List<WindowInfo> InOutWindows)
         {
-            if (InOwnerHandle == IntPtr.Zero || !InIsVisible || !InIsEnabled)
-                return false;
+            foreach (WindowInfo TheWindow in InOutWindows)
+            {
+                if (!TheWindow.IsVisible || !TheWindow.IsEnabled)
+                    continue;
 
-            // Owner が無効化されていることが主条件。Owner が有効ならモードレス（Show + Owner）とみなす。
-            return !IsWindowEnabled(InOwnerHandle);
+                if (TheWindow.OwnerHandle != 0)
+                {
+                    // A. Owner が無効化されていれば候補。Owner が有効ならモードレス（Show + Owner）とみなす。
+                    if (!IsWindowEnabled(new IntPtr(TheWindow.OwnerHandle)))
+                    {
+                        TheWindow.IsModalCandidate = true;
+                        TheWindow.ModalCandidateReason = ModalReasonOwnerDisabled;
+                    }
+                    continue;
+                }
+
+                // B. Owner なし: 同一スレッドの「可視・Owner なし・無効」ウィンドウの存在で判定する
+                foreach (WindowInfo TheSibling in InOutWindows)
+                {
+                    if (ReferenceEquals(TheSibling, TheWindow))
+                        continue;
+                    if (TheSibling.ProcessId != TheWindow.ProcessId || TheSibling.ThreadId != TheWindow.ThreadId)
+                        continue;
+                    if (TheSibling.IsVisible && TheSibling.OwnerHandle == 0 && !TheSibling.IsEnabled)
+                    {
+                        TheWindow.IsModalCandidate = true;
+                        TheWindow.ModalCandidateReason = ModalReasonSiblingDisabled;
+                        break;
+                    }
+                }
+            }
         }
 
         /// <summary>HWND を "0x" 付き 8 桁の 16 進文字列にする（32bit を超える値の場合は 16 桁）。</summary>
