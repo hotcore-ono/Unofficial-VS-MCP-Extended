@@ -159,6 +159,7 @@ namespace VsMcp.Extension
             BreakpointTools.Register(_toolRegistry, _serviceAccessor);
             OutputTools.Register(_toolRegistry, _serviceAccessor);
             UiTools.Register(_toolRegistry, _serviceAccessor);
+            UiWindowTools.Register(_toolRegistry, _serviceAccessor); // Extended: top-level window enumeration
             WatchTools.Register(_toolRegistry, _serviceAccessor);
             ThreadTools.Register(_toolRegistry, _serviceAccessor);
             ProcessTools.Register(_toolRegistry, _serviceAccessor);

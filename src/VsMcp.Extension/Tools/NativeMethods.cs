@@ -164,4 +164,63 @@ internal static extern uint MapVirtualKey(uint uCode, uint uMapType);
         { "f9", (ushort)(VK_F1 + 8) }, { "f10", (ushort)(VK_F1 + 9) },
         { "f11", (ushort)(VK_F1 + 10) }, { "f12", (ushort)(VK_F1 + 11) },
     };
+    // ------------------------------------------------------------------
+    // Extended additions (feature/modal-window-capture):
+    // デバッグ対象プロセスのトップレベルウィンドウ列挙（DebuggeeWindowEnumerator）で使う Win32 API。
+    // upstream 由来の既存宣言（GetWindowRect / GetWindowThreadProcessId / GetDpiForWindow /
+    // SetThreadDpiAwarenessContext）はそのまま再利用し、ここでは重複宣言しない。
+    // ------------------------------------------------------------------
+
+    /// <summary>EnumWindows のコールバック。false を返すと列挙を打ち切る。</summary>
+    internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindowEnabled(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern int GetWindowTextW(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern int GetWindowTextLengthW(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern int GetClassNameW(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+    [DllImport("user32.dll")]
+    internal static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetMonitorInfoW(IntPtr hMonitor, ref MONITORINFOEX lpmi);
+
+    /// <summary>GetMonitorInfoW 用。szDevice にモニターのデバイス名（例: \\.\DISPLAY1）が入る。</summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct MONITORINFOEX
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string szDevice;
+    }
+
+    // GetWindow / GetAncestor / MonitorFromWindow の引数定数
+    internal const uint GW_OWNER = 4;
+    internal const uint GA_ROOT = 2;
+    internal const uint MONITOR_DEFAULTTONEAREST = 2;
 }
