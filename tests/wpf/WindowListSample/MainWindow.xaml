@@ -20,8 +20,18 @@
         <Button x:Name="OpenDuplicateWindowsButton"
                 AutomationProperties.AutomationId="OpenDuplicateWindowsButton"
                 Content="同一タイトルの Window を 2 つ Show() で開く"
-                Width="280" Height="36"
+                Width="280" Height="36" Margin="0,0,0,12"
                 Click="OnOpenDuplicateWindowsClick" />
+        <Button x:Name="OpenDelayedWindowButton"
+                AutomationProperties.AutomationId="OpenDelayedWindowButton"
+                Content="1000ms 後に Window を表示する"
+                Width="280" Height="36" Margin="0,0,0,12"
+                Click="OnOpenDelayedWindowClick" />
+        <Button x:Name="OpenAutoCloseWindowButton"
+                AutomationProperties.AutomationId="OpenAutoCloseWindowButton"
+                Content="1000ms 後に自動で閉じる Window を開く"
+                Width="280" Height="36"
+                Click="OnOpenAutoCloseWindowClick" />
         <local:ChildWindowHost x:Name="ChildHost" Width="280" Height="24" Margin="0,12,0,0" />
     </StackPanel>
 </Window>
