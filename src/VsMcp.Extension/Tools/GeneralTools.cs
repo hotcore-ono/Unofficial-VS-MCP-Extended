@@ -142,6 +142,11 @@ namespace VsMcp.Extension.Tools
             { "ui_window_capture_region", "UI" }, // Extended
             { "ui_window_get_info", "UI" }, // Extended
             { "ui_window_find_elements", "UI" }, // Extended
+            { "ui_window_click", "UI" }, // Extended
+            { "ui_window_double_click", "UI" }, // Extended
+            { "ui_window_right_click", "UI" }, // Extended
+            { "ui_window_drag", "UI" }, // Extended
+            { "ui_window_mouse_wheel", "UI" }, // Extended
             { "ui_window_wait_idle", "UI" }, // Extended
             // Console
             { "console_read", "Console" },
