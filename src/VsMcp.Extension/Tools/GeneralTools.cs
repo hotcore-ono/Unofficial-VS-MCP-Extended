@@ -122,6 +122,12 @@ namespace VsMcp.Extension.Tools
             { "ui_capture_active_window", "UI" }, // Extended
             { "ui_wait_for_window", "UI" }, // Extended
             { "ui_wait_for_window_closed", "UI" }, // Extended
+            { "standard_dialog_detect", "UI" }, // Extended
+            { "standard_dialog_get_info", "UI" }, // Extended
+            { "standard_dialog_capture", "UI" }, // Extended
+            { "standard_dialog_execute", "UI" }, // Extended
+            { "standard_dialog_wait", "UI" }, // Extended
+            { "standard_dialog_wait_closed", "UI" }, // Extended
             // Console
             { "console_read", "Console" },
             { "console_send", "Console" },
