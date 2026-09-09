@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:WindowListSample"
         Title="WindowListSample Main"
-        Width="900" Height="520"
+        Width="900" Height="640"
         WindowStartupLocation="CenterScreen">
     <StackPanel Orientation="Horizontal" Margin="24" VerticalAlignment="Center" HorizontalAlignment="Center">
     <StackPanel Margin="0,0,24,0" VerticalAlignment="Top">
@@ -45,7 +45,10 @@
         <Button AutomationProperties.AutomationId="ShowMessageBoxRetryCancelButton" Content="MessageBox RetryCancel" Width="280" Height="30" Margin="0,0,0,16" Click="OnShowMessageBoxRetryCancelClick" />
         <Button AutomationProperties.AutomationId="ShowTaskDialogOkCancelButton" Content="TaskDialog OK / Cancel" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowTaskDialogOkCancelClick" />
         <Button AutomationProperties.AutomationId="ShowTaskDialogYesNoButton" Content="TaskDialog Yes / No" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowTaskDialogYesNoClick" />
-        <Button AutomationProperties.AutomationId="ShowTaskDialogCustomButton" Content="TaskDialog Custom（TaskDialogIndirect）" Width="280" Height="30" Click="OnShowTaskDialogCustomClick" />
+        <Button AutomationProperties.AutomationId="ShowTaskDialogCustomButton" Content="TaskDialog Custom（TaskDialogIndirect）" Width="280" Height="30" Margin="0,0,0,16" Click="OnShowTaskDialogCustomClick" />
+        <Button AutomationProperties.AutomationId="ShowOpenFileDialogButton" Content="OpenFileDialog（fixture フォルダー）" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowOpenFileDialogClick" />
+        <Button AutomationProperties.AutomationId="ShowSaveFileDialogButton" Content="SaveFileDialog（fixture フォルダー）" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowSaveFileDialogClick" />
+        <Button AutomationProperties.AutomationId="ShowOpenFolderDialogButton" Content="OpenFolderDialog（fixture フォルダー）" Width="280" Height="30" Click="OnShowOpenFolderDialogClick" />
         <TextBlock x:Name="LastDialogResultText" Text="最後の結果: (なし)" Margin="0,12,0,0" AutomationProperties.AutomationId="LastDialogResultText" />
     </StackPanel>
     </StackPanel>

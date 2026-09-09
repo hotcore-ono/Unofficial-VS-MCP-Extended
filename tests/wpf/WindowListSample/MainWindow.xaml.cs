@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -168,6 +169,65 @@ namespace WindowListSample
             IntPtr TheOwner = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             int TheResult = TaskDialogInterop.ShowCustom(TheOwner);
             LastDialogResultText.Text = $"最後の結果: TaskDialog Custom -> {TheResult}";
+        }
+
+        /// <summary>File Dialog 検証用の fixture（%TEMP%\VsMcpExtendedFileDialogTest\alpha.txt, beta.txt, SampleFolder\）を用意してそのパスを返す。</summary>
+        /// <returns>fixture フォルダーの絶対パス。</returns>
+        private static string EnsureFileDialogFixture()
+        {
+            string TheRoot = Path.Combine(Path.GetTempPath(), "VsMcpExtendedFileDialogTest");
+            Directory.CreateDirectory(Path.Combine(TheRoot, "SampleFolder"));
+            foreach (string TheName in new[] { "alpha.txt", "beta.txt" })
+            {
+                string ThePath = Path.Combine(TheRoot, TheName);
+                if (!File.Exists(ThePath))
+                    File.WriteAllText(ThePath, TheName);
+            }
+            return TheRoot;
+        }
+
+        /// <summary>Microsoft.Win32.OpenFileDialog（IFileOpenDialog）を fixture フォルダーで開く。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowOpenFileDialogClick(object InSender, RoutedEventArgs InArgs)
+        {
+            Microsoft.Win32.OpenFileDialog TheDialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Open File (Test)",
+                InitialDirectory = EnsureFileDialogFixture(),
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+            };
+            bool? TheResult = TheDialog.ShowDialog(this);
+            LastDialogResultText.Text = $"最後の結果: OpenFileDialog -> {TheResult} {TheDialog.FileName}";
+        }
+
+        /// <summary>Microsoft.Win32.SaveFileDialog（IFileSaveDialog）を fixture フォルダーで開く。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowSaveFileDialogClick(object InSender, RoutedEventArgs InArgs)
+        {
+            Microsoft.Win32.SaveFileDialog TheDialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Save File (Test)",
+                InitialDirectory = EnsureFileDialogFixture(),
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+            };
+            bool? TheResult = TheDialog.ShowDialog(this);
+            LastDialogResultText.Text = $"最後の結果: SaveFileDialog -> {TheResult} {TheDialog.FileName}";
+        }
+
+        /// <summary>Microsoft.Win32.OpenFolderDialog（IFileOpenDialog + FOS_PICKFOLDERS）を fixture フォルダーで開く。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowOpenFolderDialogClick(object InSender, RoutedEventArgs InArgs)
+        {
+            Microsoft.Win32.OpenFolderDialog TheDialog = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "Open Folder (Test)",
+                InitialDirectory = EnsureFileDialogFixture(),
+            };
+            bool? TheResult = TheDialog.ShowDialog(this);
+            LastDialogResultText.Text = $"最後の結果: OpenFolderDialog -> {TheResult} {TheDialog.FolderName}";
         }
     }
 }
