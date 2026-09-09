@@ -277,4 +277,21 @@ internal static extern uint MapVirtualKey(uint uCode, uint uMapType);
     internal const uint TDM_CLICK_BUTTON = 0x0400 + 102;
     internal const uint SMTO_BLOCK = 0x0001;
     internal const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    // ------------------------------------------------------------------
+    // Extended additions (Phase 6): 標準 File Dialog（IFileDialog）のファイル名 Edit / 種類 ComboBox を
+    // 他プロセスから読み書きするための WM_GETTEXT / WM_SETTEXT / CB_* 用 SendMessageTimeoutW オーバーロード。
+    // ------------------------------------------------------------------
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "SendMessageTimeoutW")]
+    internal static extern IntPtr SendMessageTimeoutText(IntPtr hWnd, uint Msg, IntPtr wParam, System.Text.StringBuilder lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "SendMessageTimeoutW")]
+    internal static extern IntPtr SendMessageTimeoutSetText(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+    internal const uint WM_SETTEXT = 0x000C;
+    internal const uint WM_GETTEXT = 0x000D;
+    internal const uint WM_GETTEXTLENGTH = 0x000E;
+    internal const uint CB_GETCURSEL = 0x0147;
+    internal const uint CB_GETLBTEXT = 0x0148;
+    internal const uint CB_GETLBTEXTLEN = 0x0149;
 }
