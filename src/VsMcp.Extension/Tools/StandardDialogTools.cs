@@ -207,6 +207,17 @@ namespace VsMcp.Extension.Tools
             if (TheResolved.Error != null)
                 return TheResolved.Error;
 
+            // Extended (Phase 9): 実行系は Action 系ツールと同じ安全境界（HWND / PID / ウィンドウ状態 / モーダル判定）を通す。
+            // 対象がダイアログ自身であることを示すため TryCreateForDialog を使う（可視かつ有効なダイアログ自身は
+            // モーダル候補であっても interactable と判定される）。Win32 のみで UIA を使わないため STA である必要はない。
+            (string TheContextError, UiInteractionContext TheContext) = await Task.Run(() =>
+            {
+                string TheCreateError = UiInteractionContext.TryCreateForDialog(TheResolved.Window, TheResolved.ProcessIds, out UiInteractionContext TheCreated);
+                return (TheCreateError, TheCreated);
+            });
+            if (TheContextError != null)
+                return McpToolResult.Error(TheContextError);
+
             StandardDialogInfo TheInfo = TheResolved.Info;
             string TheAvailable = DescribeButtons(TheInfo.Buttons);
             if (TheResolved.Adapter == null)
@@ -238,6 +249,11 @@ namespace VsMcp.Extension.Tools
 
             if (!TheButton.IsEnabled)
                 return McpToolResult.Error($"Button id {TheButton.Id} ('{TheButton.Text}') on dialog {TheInfo.Handle} is disabled.");
+
+            // Extended (Phase 9): 押す直前に対象が解決時と同じウィンドウのままかを確認する（分類は解決時の 1 回を正本にする）
+            string TheReverifyError = TheContext.ReverifyBeforeAction(TheInfo.DialogType);
+            if (TheReverifyError != null)
+                return McpToolResult.Error(TheReverifyError);
 
             string TheMethod;
             try
@@ -379,6 +395,12 @@ namespace VsMcp.Extension.Tools
             public IStandardDialogAdapter Adapter { get; set; }
             public StandardDialogStructure Structure { get; set; }
             public McpToolResult Error { get; set; }
+
+            /// <summary>Extended (Phase 9): 正規化済みのトップレベル HWND（操作直前の共通再検証で使う）。</summary>
+            public IntPtr Window { get; set; }
+
+            /// <summary>Extended (Phase 9): デバッグ中プロセス ID の集合（操作直前の共通再検証で使う）。</summary>
+            public HashSet<uint> ProcessIds { get; set; }
         }
 
         /// <summary>
@@ -420,7 +442,14 @@ namespace VsMcp.Extension.Tools
                 {
                     StandardDialogStructure TheStructure = StandardDialogResolver.Inspect(TheNormalized);
                     StandardDialogInfo TheInfo = StandardDialogResolver.BuildInfo(TheWindow, TheStructure, out IStandardDialogAdapter TheAdapter);
-                    return new ResolvedDialog { Info = TheInfo, Adapter = TheAdapter, Structure = TheStructure };
+                    return new ResolvedDialog
+                    {
+                        Info = TheInfo,
+                        Adapter = TheAdapter,
+                        Structure = TheStructure,
+                        Window = TheNormalized,
+                        ProcessIds = TheProcessIds,
+                    };
                 });
             }
             catch (Exception TheException)

@@ -232,8 +232,18 @@ namespace VsMcp.Extension.Tools
             ResolvedFileDialog TheResolved = await ResolveByHandleAsync(InAccessor, InArgs);
             if (TheResolved.Error != null)
                 return TheResolved.Error;
+
+            (string TheContextError, UiInteractionContext TheContext) = await CreateInteractionContextAsync(TheResolved);
+            if (TheContextError != null)
+                return McpToolResult.Error(TheContextError);
+
             if (TheResolved.Adapter == null || TheResolved.Info.FileNameEditHandle == 0)
                 return McpToolResult.Error($"File dialog {TheResolved.Info.Handle} ('{TheResolved.Info.Title}') has no recognized file-name control (dialogType {TheResolved.Info.DialogType}); refusing to type into it.");
+
+            // Extended (Phase 9): 書き込む直前に対象が解決時と同じウィンドウのままかを確認する
+            string TheReverifyError = TheContext.ReverifyBeforeAction(TheResolved.Info.DialogType);
+            if (TheReverifyError != null)
+                return McpToolResult.Error(TheReverifyError);
 
             try
             {
@@ -272,6 +282,10 @@ namespace VsMcp.Extension.Tools
             if (TheResolved.Error != null)
                 return TheResolved.Error;
 
+            (string TheContextError, UiInteractionContext TheContext) = await CreateInteractionContextAsync(TheResolved);
+            if (TheContextError != null)
+                return McpToolResult.Error(TheContextError);
+
             try
             {
                 return await RunWithTimeoutAsync(() =>
@@ -301,6 +315,11 @@ namespace VsMcp.Extension.Tools
                     }
 
                     int TheTarget = TheMatches[0];
+                    // Extended (Phase 9): 選択する直前に対象が解決時と同じウィンドウのままかを確認する
+                    string TheReverifyError = TheContext.ReverifyBeforeAction(TheResolved.Info.DialogType);
+                    if (TheReverifyError != null)
+                        return McpToolResult.Error(TheReverifyError);
+
                     if (TheTarget >= TheElements.Count || !StandardFileDialogResolver.TrySelectItem(TheElements[TheTarget]))
                         return McpToolResult.Error($"Failed to select item '{TheItems[TheTarget].Name}' via SelectionItemPattern.");
 
@@ -332,11 +351,20 @@ namespace VsMcp.Extension.Tools
             if (TheResolved.Error != null)
                 return TheResolved.Error;
 
+            (string TheContextError, UiInteractionContext TheContext) = await CreateInteractionContextAsync(TheResolved);
+            if (TheContextError != null)
+                return McpToolResult.Error(TheContextError);
+
             DialogChildControl TheButton = StandardFileDialogResolver.FindButton(TheResolved.Structure, InControlId);
             if (TheButton == null)
                 return McpToolResult.Error($"File dialog {TheResolved.Info.Handle} has no button with control ID {InControlId}.");
             if (!TheButton.IsEnabled)
                 return McpToolResult.Error($"Button id {InControlId} ('{StandardDialogResolver.StripAccelerator(TheButton.Text)}') on file dialog {TheResolved.Info.Handle} is disabled.");
+
+            // Extended (Phase 9): 押す直前に対象が解決時と同じウィンドウのままかを確認する
+            string TheReverifyError = TheContext.ReverifyBeforeAction(TheResolved.Info.DialogType);
+            if (TheReverifyError != null)
+                return McpToolResult.Error(TheReverifyError);
 
             string TheMethod;
             try
@@ -476,6 +504,29 @@ namespace VsMcp.Extension.Tools
             public IStandardFileDialogAdapter Adapter { get; set; }
             public StandardDialogStructure Structure { get; set; }
             public McpToolResult Error { get; set; }
+
+            /// <summary>Extended (Phase 9): 正規化済みのトップレベル HWND（操作直前の共通再検証で使う）。</summary>
+            public IntPtr Window { get; set; }
+
+            /// <summary>Extended (Phase 9): デバッグ中プロセス ID の集合（操作直前の共通再検証で使う）。</summary>
+            public HashSet<uint> ProcessIds { get; set; }
+        }
+
+        /// <summary>
+        /// Extended (Phase 9): 実行系（set_filename / select / confirm / cancel）が解決直後に通す共通の安全境界。
+        /// Action 系ツールと同じ HWND / PID / ウィンドウ状態 / モーダル判定を適用する（対象がダイアログ自身であることを示すため
+        /// <see cref="UiInteractionContext.TryCreateForDialog"/> を使う。可視かつ有効なダイアログ自身はモーダル候補であっても
+        /// interactable と判定される）。Win32 のみで UIA を使わないため STA である必要はない。既存の検証・エラー文はそのまま残す。
+        /// </summary>
+        /// <param name="InResolved">解決済みの File Dialog。</param>
+        /// <returns>Context とエラーメッセージ。正常ならエラーは null。</returns>
+        private static Task<(string Error, UiInteractionContext Context)> CreateInteractionContextAsync(ResolvedFileDialog InResolved)
+        {
+            return Task.Run(() =>
+            {
+                string TheCreateError = UiInteractionContext.TryCreateForDialog(InResolved.Window, InResolved.ProcessIds, out UiInteractionContext TheCreated);
+                return (TheCreateError, TheCreated);
+            });
         }
 
         /// <summary>
@@ -525,7 +576,14 @@ namespace VsMcp.Extension.Tools
                         };
                     }
                     StandardFileDialogInfo TheInfo = StandardFileDialogResolver.BuildInfo(TheWindow, TheStructure, out IStandardFileDialogAdapter TheAdapter);
-                    return new ResolvedFileDialog { Info = TheInfo, Adapter = TheAdapter, Structure = TheStructure };
+                    return new ResolvedFileDialog
+                    {
+                        Info = TheInfo,
+                        Adapter = TheAdapter,
+                        Structure = TheStructure,
+                        Window = TheNormalized,
+                        ProcessIds = TheProcessIds,
+                    };
                 });
             }
             catch (Exception TheException)
