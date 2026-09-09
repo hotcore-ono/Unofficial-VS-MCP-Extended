@@ -257,7 +257,24 @@ namespace VsMcp.Extension.Tools
                 return TheBoundsError;
             }
 
-            long TheTopmost = UiTools.WithDpiAwareness(() =>
+            long TheTopmost = ResolveTopmostRoot(InX, InY);
+            if (TheTopmost != InWindow.ToInt64())
+            {
+                return DescribeCoveredPoint(InWindow, InX, InY, InWhat, TheTopmost);
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 点の最前面ウィンドウのトップレベル HWND（WindowFromPoint の GA_ROOT）を返す。
+        /// 座標ゲートの判定元はここ 1 か所にまとめ、<see cref="UiInteractionContext.PreparePhysicalPoint"/> からも使う。
+        /// </summary>
+        /// <param name="InX">スクリーン X（物理 px。負値も可）。</param>
+        /// <param name="InY">スクリーン Y（物理 px。負値も可）。</param>
+        /// <returns>トップレベル HWND（10 進）。取得できなければ 0。</returns>
+        internal static long ResolveTopmostRoot(int InX, int InY)
+        {
+            return UiTools.WithDpiAwareness(() =>
             {
                 IntPtr TheHit = WindowFromPoint(new POINT { X = InX, Y = InY });
                 if (TheHit == IntPtr.Zero)
@@ -267,13 +284,19 @@ namespace VsMcp.Extension.Tools
                 IntPtr TheRoot = GetAncestor(TheHit, GA_ROOT);
                 return (TheRoot == IntPtr.Zero ? TheHit : TheRoot).ToInt64();
             });
+        }
 
-            if (TheTopmost != InWindow.ToInt64())
-            {
-                return $"The {InWhat} ({InX}, {InY}) is covered by another window ({TheTopmost}), not by the target window {InWindow.ToInt64()}. " +
-                    "Bring the target window to the front or close the covering window (a popup or dialog) first.";
-            }
-            return null;
+        /// <summary>座標ゲートで「点が別のウィンドウに覆われている」ときのエラー文を組み立てる（Phase 7 と同文）。</summary>
+        /// <param name="InWindow">対象のトップレベル HWND。</param>
+        /// <param name="InX">スクリーン X（物理 px）。</param>
+        /// <param name="InY">スクリーン Y（物理 px）。</param>
+        /// <param name="InWhat">エラーメッセージで対象を示す語（例: "click point"）。</param>
+        /// <param name="InTopmostHandle">その点の最前面のトップレベル HWND（10 進）。</param>
+        /// <returns>エラーメッセージ。</returns>
+        internal static string DescribeCoveredPoint(IntPtr InWindow, int InX, int InY, string InWhat, long InTopmostHandle)
+        {
+            return $"The {InWhat} ({InX}, {InY}) is covered by another window ({InTopmostHandle}), not by the target window {InWindow.ToInt64()}. " +
+                "Bring the target window to the front or close the covering window (a popup or dialog) first.";
         }
     }
 }

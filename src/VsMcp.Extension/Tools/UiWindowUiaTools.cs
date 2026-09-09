@@ -83,7 +83,10 @@ namespace VsMcp.Extension.Tools
                     "element (when it belongs to this window) and the modal state of ANY top-level window of the debugged application identified by its HWND, in one structure. " +
                     "'modalState.isBlockedByModal' tells whether the window is currently disabled by a modal dialog (with the blocking window's handle / title / " +
                     "modalCandidateReason); the ui_window_* action tools refuse to act on such a window. 'uiaRoot.nativeWindowHandle' and 'window.handle' are both returned " +
-                    "so any difference is visible rather than guessed. The handle is validated first (exists, normalized to its top-level window, belongs to a debugged process).",
+                    "so any difference is visible rather than guessed. 'geometry' adds the values read at call time in physical screen pixels: windowBoundsPhysical " +
+                    "('x,y,width,height', negative coordinates on secondary monitors are normal), dpi (GetDpiForWindow, no fixed 96 DPI conversion), monitorName, " +
+                    "monitorBounds, monitorWorkArea and isPrimaryMonitor; values that cannot be read are null. " +
+                    "The handle is validated first (exists, normalized to its top-level window, belongs to a debugged process).",
                     SchemaBuilder.Create()
                         .AddInteger("windowHandle", "HWND of the window (decimal)", required: true)
                         .Build()),
@@ -180,11 +183,12 @@ namespace VsMcp.Extension.Tools
 
         /// <summary>
         /// ui_window_get_info の本体。WindowInfo（Phase 1 の列挙結果）、UIA root（AutomationElement.FromHandle）、フォーカス要素（この HWND 配下のときだけ）、
-        /// モーダル状態（UiWindowActionValidator）を 1 つの構造で返す。root の NativeWindowHandle と WindowInfo.Handle の一致は判定して両方返す。
+        /// モーダル状態（UiWindowActionValidator）、Geometry（Phase 8: 物理矩形 / DPI / モニター）を 1 つの構造で返す。
+        /// root の NativeWindowHandle と WindowInfo.Handle の一致は判定して両方返す。
         /// </summary>
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         /// <param name="InArgs">ツール引数。</param>
-        /// <returns>text（window / uiaRoot / uiaRootMatchesHandle / focused / focusedWindowHandle / modalState）、またはエラー。</returns>
+        /// <returns>text（window / uiaRoot / uiaRootMatchesHandle / focused / focusedWindowHandle / modalState / geometry）、またはエラー。</returns>
         private static async Task<McpToolResult> UiWindowGetInfoAsync(VsServiceAccessor InAccessor, JObject InArgs)
         {
             (IntPtr TheWindow, HashSet<uint> TheProcessIds, McpToolResult TheError) = await ResolveWindowWithProcessesAsync(InAccessor, InArgs);
@@ -238,6 +242,8 @@ namespace VsMcp.Extension.Tools
                         focused = TheFocusedInfo,
                         focusedWindowHandle = TheFocusedWindowHandle,
                         modalState = TheState,
+                        // Extended (Phase 8): 呼び出し時点の物理矩形 / DPI / モニター（既存キーは変更しない）
+                        geometry = UiWindowGeometryResolver.Resolve(TheWindow),
                     });
                 });
             }
