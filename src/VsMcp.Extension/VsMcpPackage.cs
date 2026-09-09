@@ -162,7 +162,8 @@ namespace VsMcp.Extension
             UiWindowTools.Register(_toolRegistry, _serviceAccessor); // Extended: top-level window enumeration
             StandardDialogTools.Register(_toolRegistry, _serviceAccessor); // Extended: standard Windows dialog automation
             StandardFileDialogTools.Register(_toolRegistry, _serviceAccessor); // Extended: standard file dialog automation
-            UiWindowUiaTools.Register(_toolRegistry, _serviceAccessor); // Extended: UIA tree / snapshot / region capture for any debuggee window
+            UiWindowUiaTools.Register(_toolRegistry, _serviceAccessor); // Extended: UIA tree / snapshot / region capture / info / find for any debuggee window
+            UiWindowIdleTools.Register(_toolRegistry, _serviceAccessor); // Extended: wait idle for any debuggee window set
             WatchTools.Register(_toolRegistry, _serviceAccessor);
             ThreadTools.Register(_toolRegistry, _serviceAccessor);
             ProcessTools.Register(_toolRegistry, _serviceAccessor);
