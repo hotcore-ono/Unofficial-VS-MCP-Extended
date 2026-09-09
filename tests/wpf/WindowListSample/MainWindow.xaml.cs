@@ -1,6 +1,9 @@
 using System;
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 
 namespace WindowListSample
@@ -11,10 +14,38 @@ namespace WindowListSample
         /// <summary>遅延表示・自動 Close の待ち時間（ui_wait_for_window / ui_wait_for_window_closed の検証用）。</summary>
         private const int TimerDelayMs = 1000;
 
+        /// <summary>Busy シミュレーションの 1 ステップあたりの待ち時間（ミリ秒）。</summary>
+        private const int _BUSY_INTERVAL_MS = 300;
+
+        /// <summary>Busy シミュレーションのステップ数。</summary>
+        private const int _BUSY_STEP_COUNT = 5;
+
+        /// <summary>スクロール検証用に生成する項目数。</summary>
+        private const int _SCROLL_ITEM_COUNT = 40;
+
+        /// <summary>ClickTestButton がクリックされた回数。</summary>
+        private int _ClickCount;
+
+        /// <summary>DoubleClickTestArea で単クリックされた回数（ダブルクリックの 1 打目も含む）。</summary>
+        private int _SingleClickCount;
+
+        /// <summary>DoubleClickTestArea でダブルクリックされた回数。</summary>
+        private int _DoubleClickCount;
+
+        /// <summary>RightClickTestArea のコンテキストメニューが開かれた回数。</summary>
+        private int _ContextMenuOpenCount;
+
+        /// <summary>DragTarget の矩形内でマウスボタンが離された回数。</summary>
+        private int _DropCount;
+
+        /// <summary>DragSource 上で左ボタンが押され、ドラッグ追跡中であるかどうか。</summary>
+        private bool _IsDragArmed;
+
         /// <summary>コンストラクタ。XAML を読み込む。</summary>
         public MainWindow()
         {
             InitializeComponent();
+            CreateScrollItems();
         }
 
         /// <summary>Owner を明示して ShowDialog する。</summary>
@@ -228,6 +259,149 @@ namespace WindowListSample
             };
             bool? TheResult = TheDialog.ShowDialog(this);
             LastDialogResultText.Text = $"最後の結果: OpenFolderDialog -> {TheResult} {TheDialog.FolderName}";
+        }
+
+        /// <summary>スクロール検証用の項目（Item 01〜Item 40）を ScrollItemsPanel に生成する。</summary>
+        private void CreateScrollItems()
+        {
+            for (int TheIndex = 1; TheIndex <= _SCROLL_ITEM_COUNT; TheIndex++)
+            {
+                string TheItemNumber = TheIndex.ToString("00");
+                TextBlock TheItem = new TextBlock { Text = $"Item {TheItemNumber}" };
+                AutomationProperties.SetAutomationId(TheItem, $"ScrollItem{TheItemNumber}");
+                ScrollItemsPanel.Children.Add(TheItem);
+            }
+        }
+
+        /// <summary>ClickTestButton のクリック回数を数えて表示する（単一クリック操作の検証用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnClickTestClick(object InSender, RoutedEventArgs InArgs)
+        {
+            _ClickCount++;
+            ClickCountText.Text = $"Click: {_ClickCount}";
+        }
+
+        /// <summary>DoubleClickTestArea の単クリック回数を数える（ダブルクリックの 1 打目のみ数えるため ClickCount が 1 のときに限定する）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">マウスボタンイベント引数。</param>
+        private void OnDoubleClickAreaPreviewMouseLeftButtonDown(object InSender, MouseButtonEventArgs InArgs)
+        {
+            if (InArgs.ClickCount == 1)
+            {
+                _SingleClickCount++;
+                UpdateDoubleClickCountText();
+            }
+        }
+
+        /// <summary>DoubleClickTestArea のダブルクリック回数を数える（ダブルクリック操作の検証用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">マウスボタンイベント引数。</param>
+        private void OnDoubleClickAreaMouseDoubleClick(object InSender, MouseButtonEventArgs InArgs)
+        {
+            _DoubleClickCount++;
+            UpdateDoubleClickCountText();
+        }
+
+        /// <summary>ダブルクリック回数と単クリック回数の表示を更新する。</summary>
+        private void UpdateDoubleClickCountText()
+        {
+            DoubleClickCountText.Text = $"DoubleClick: {_DoubleClickCount} / SingleClick: {_SingleClickCount}";
+        }
+
+        /// <summary>RightClickTestArea のコンテキストメニューが開かれた回数を数える（右クリック操作の検証用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">コンテキストメニューイベント引数。</param>
+        private void OnRightClickAreaContextMenuOpening(object InSender, ContextMenuEventArgs InArgs)
+        {
+            _ContextMenuOpenCount++;
+            ContextMenuCountText.Text = $"ContextMenu: opened {_ContextMenuOpenCount}";
+        }
+
+        /// <summary>コンテキストメニューの Context Item A が選択されたことを表示する。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnContextMenuItemAClick(object InSender, RoutedEventArgs InArgs)
+        {
+            ContextMenuCountText.Text = $"ContextMenu: opened {_ContextMenuOpenCount}, selected A";
+        }
+
+        /// <summary>コンテキストメニューの Context Item B が選択されたことを表示する。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnContextMenuItemBClick(object InSender, RoutedEventArgs InArgs)
+        {
+            ContextMenuCountText.Text = $"ContextMenu: opened {_ContextMenuOpenCount}, selected B";
+        }
+
+        /// <summary>DragSource 上での左ボタン押下でドラッグ追跡を開始し、マウスをキャプチャする（OLE の DoDragDrop は使わず手動で追跡する）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">マウスボタンイベント引数。</param>
+        private void OnDragSourcePreviewMouseLeftButtonDown(object InSender, MouseButtonEventArgs InArgs)
+        {
+            _IsDragArmed = true;
+            Mouse.Capture(DragSource);
+        }
+
+        /// <summary>マウスキャプチャを解除し、離した位置が DragTarget の矩形内かどうかで結果を表示する（ドラッグ操作の検証用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">マウスボタンイベント引数。</param>
+        private void OnDragSourcePreviewMouseLeftButtonUp(object InSender, MouseButtonEventArgs InArgs)
+        {
+            if (!_IsDragArmed)
+            {
+                return;
+            }
+            _IsDragArmed = false;
+            Mouse.Capture(null);
+            Point TheReleasePosition = InArgs.GetPosition(DragTarget);
+            bool IsInsideTarget = TheReleasePosition.X >= 0.0
+                && TheReleasePosition.Y >= 0.0
+                && TheReleasePosition.X <= DragTarget.ActualWidth
+                && TheReleasePosition.Y <= DragTarget.ActualHeight;
+            if (IsInsideTarget)
+            {
+                _DropCount++;
+                DragResultText.Text = $"Drag: dropped on target ({_DropCount})";
+            }
+            else
+            {
+                DragResultText.Text = "Drag: released outside target";
+            }
+        }
+
+        /// <summary>ScrollableArea の垂直スクロール位置を整数で表示する（スクロール操作の検証用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">スクロール変更イベント引数。</param>
+        private void OnScrollableAreaScrollChanged(object InSender, ScrollChangedEventArgs InArgs)
+        {
+            ScrollOffsetText.Text = $"Scroll: VerticalOffset={(int)InArgs.VerticalOffset}";
+        }
+
+        /// <summary>_BUSY_INTERVAL_MS 間隔で _BUSY_STEP_COUNT 回だけ項目を追加する（処理中の状態変化・待機の検証用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnBusyStartClick(object InSender, RoutedEventArgs InArgs)
+        {
+            BusyItemsPanel.Children.Clear();
+            int TheStepIndex = 0;
+            BusyStatusText.Text = $"Busy: running {TheStepIndex}/{_BUSY_STEP_COUNT}";
+            DispatcherTimer TheTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(_BUSY_INTERVAL_MS) };
+            TheTimer.Tick += (InTimerSender, InTimerArgs) =>
+            {
+                TheStepIndex++;
+                BusyItemsPanel.Children.Add(new TextBlock { Text = $"Busy item {TheStepIndex}" });
+                if (TheStepIndex >= _BUSY_STEP_COUNT)
+                {
+                    TheTimer.Stop();
+                    BusyStatusText.Text = "Busy: done";
+                }
+                else
+                {
+                    BusyStatusText.Text = $"Busy: running {TheStepIndex}/{_BUSY_STEP_COUNT}";
+                }
+            };
+            TheTimer.Start();
         }
     }
 }
