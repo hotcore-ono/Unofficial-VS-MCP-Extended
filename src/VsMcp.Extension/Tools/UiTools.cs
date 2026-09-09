@@ -22,13 +22,13 @@ namespace VsMcp.Extension.Tools
     public static class UiTools
     {
 
-        private const int UiaTimeoutSeconds = 30;
+        internal const int UiaTimeoutSeconds = 30; // Extended: internal so ui_window_* tools report the same timeout
         private const int MaxImageDimension = 1920;
         // Base64 overhead is ~1.37x, so 14MB base64 ≈ 10.2MB raw.
         // Claude Code limit is 20MB; keep well under it.
         private const int MaxBase64Length = 14 * 1024 * 1024;
 
-        private static Task<T> RunOnBackgroundSTAAsync<T>(Func<T> func)
+        internal static Task<T> RunOnBackgroundSTAAsync<T>(Func<T> func) // Extended: internal (shared with ui_window_* tools)
         {
             var tcs = new TaskCompletionSource<T>();
             var thread = new System.Threading.Thread(() =>
@@ -48,7 +48,7 @@ namespace VsMcp.Extension.Tools
             return tcs.Task;
         }
 
-        private static async Task<T> RunUiaWithTimeoutAsync<T>(Func<T> func)
+        internal static async Task<T> RunUiaWithTimeoutAsync<T>(Func<T> func) // Extended: internal (shared with ui_window_* tools)
         {
             var task = RunOnBackgroundSTAAsync(func);
             if (await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(UiaTimeoutSeconds))) != task)
@@ -882,6 +882,20 @@ namespace VsMcp.Extension.Tools
             if (pid == 0)
                 return McpToolResult.Error("No debugged process found. Make sure debugging is active.");
 
+            var (idle, elapsedMs, lastCount) = await WaitForStableElementCountAsync(() => CountElementsInProcess(pid), quietMs, timeoutMs, pollIntervalMs);
+            return McpToolResult.Success(new
+            {
+                idle,
+                elapsedMs,
+                finalElementCount = lastCount,
+            });
+        }
+
+        // Extended: shared by ui_wait_idle (first top-level window of the debuggee process) and ui_window_wait_idle (any debuggee HWND set).
+        // The idle definition is unchanged: the element count returned by countElements must stay the same for quietMs.
+        internal static async Task<(bool idle, long elapsedMs, int finalCount)> WaitForStableElementCountAsync(
+            Func<int> countElements, int quietMs, int timeoutMs, int pollIntervalMs)
+        {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             int lastCount = -1;
             long lastChangeMs = 0;
@@ -892,7 +906,7 @@ namespace VsMcp.Extension.Tools
                 int count;
                 try
                 {
-                    count = await RunUiaWithTimeoutAsync(() => CountElementsInProcess(pid));
+                    count = await RunUiaWithTimeoutAsync(countElements);
                 }
                 catch (TimeoutException)
                 {
@@ -917,12 +931,7 @@ namespace VsMcp.Extension.Tools
             }
 
             stopwatch.Stop();
-            return McpToolResult.Success(new
-            {
-                idle,
-                elapsedMs = stopwatch.ElapsedMilliseconds,
-                finalElementCount = lastCount,
-            });
+            return (idle, stopwatch.ElapsedMilliseconds, lastCount);
         }
 
         private static AutomationElement FindFirstMatchingInProcess(int pid,
@@ -960,7 +969,7 @@ namespace VsMcp.Extension.Tools
             return count;
         }
 
-        private static void CountWalk(AutomationElement element, ref int count)
+        internal static void CountWalk(AutomationElement element, ref int count) // Extended: internal (ui_window_wait_idle)
         {
             if (element == null) return;
             count++;
@@ -1989,7 +1998,7 @@ namespace VsMcp.Extension.Tools
         /// Executes an action with Per-Monitor DPI Awareness V2 context,
         /// ensuring all Win32 coordinate APIs use physical pixel coordinates.
         /// </summary>
-        private static T WithDpiAwareness<T>(Func<T> action)
+        internal static T WithDpiAwareness<T>(Func<T> action) // Extended: internal (ui_window_* tools)
         {
             var prev = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             try
@@ -2003,7 +2012,7 @@ namespace VsMcp.Extension.Tools
             }
         }
 
-        private static void WithDpiAwareness(Action action)
+        internal static void WithDpiAwareness(Action action) // Extended: internal (ui_window_* tools)
         {
             var prev = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             try
@@ -2017,7 +2026,7 @@ namespace VsMcp.Extension.Tools
             }
         }
 
-        private static string ValidateCoordinatesInWindow(IntPtr hwnd, int x, int y)
+        internal static string ValidateCoordinatesInWindow(IntPtr hwnd, int x, int y) // Extended: internal (ui_window_* tools)
         {
             if (hwnd == IntPtr.Zero)
                 return null; // No window to validate against
@@ -2034,7 +2043,7 @@ namespace VsMcp.Extension.Tools
             });
         }
 
-        private static void WithBlockedInput(bool block, Action action)
+        internal static void WithBlockedInput(bool block, Action action) // Extended: internal (ui_window_* tools)
         {
             if (!block)
             {
@@ -2075,7 +2084,7 @@ namespace VsMcp.Extension.Tools
             }
         }
 
-        private static void PerformClick(int x, int y, bool restoreCursor = false)
+        internal static void PerformClick(int x, int y, bool restoreCursor = false) // Extended: internal (ui_window_click)
         {
             WithCursorRestore(restoreCursor, () => WithDpiAwareness(() =>
             {
@@ -2085,7 +2094,7 @@ namespace VsMcp.Extension.Tools
             }));
         }
 
-        private static void PerformDoubleClick(int x, int y, bool restoreCursor = false)
+        internal static void PerformDoubleClick(int x, int y, bool restoreCursor = false) // Extended: internal (ui_window_double_click)
         {
             WithCursorRestore(restoreCursor, () => WithDpiAwareness(() =>
             {
@@ -2097,7 +2106,7 @@ namespace VsMcp.Extension.Tools
             }));
         }
 
-        private static void PerformRightClick(int x, int y, bool restoreCursor = false)
+        internal static void PerformRightClick(int x, int y, bool restoreCursor = false) // Extended: internal (ui_window_right_click)
         {
             WithCursorRestore(restoreCursor, () => WithDpiAwareness(() =>
             {
@@ -2107,7 +2116,7 @@ namespace VsMcp.Extension.Tools
             }));
         }
 
-        private static IntPtr FindHwndAtPoint(int x, int y, int debuggeePid)
+        internal static IntPtr FindHwndAtPoint(int x, int y, int debuggeePid) // Extended: internal (ui_window_mouse_wheel)
         {
             var pt = new POINT { X = x, Y = y };
             var hwnd = WindowFromPoint(pt);
@@ -2131,7 +2140,7 @@ namespace VsMcp.Extension.Tools
             return (IntPtr)((delta << 16) | keyState);
         }
 
-        private static bool TryPostWheelMessage(IntPtr hwnd, int screenX, int screenY, int clicks, bool horizontal)
+        internal static bool TryPostWheelMessage(IntPtr hwnd, int screenX, int screenY, int clicks, bool horizontal) // Extended: internal (ui_window_mouse_wheel)
         {
             if (hwnd == IntPtr.Zero)
                 return false;
@@ -2143,7 +2152,7 @@ namespace VsMcp.Extension.Tools
             return PostMessage(hwnd, msg, wParam, lParam);
         }
 
-        private static void PerformWheel(int x, int y, int clicks, bool horizontal, bool restoreCursor = false)
+        internal static void PerformWheel(int x, int y, int clicks, bool horizontal, bool restoreCursor = false) // Extended: internal (ui_window_mouse_wheel)
         {
             WithCursorRestore(restoreCursor, () => WithDpiAwareness(() =>
             {
@@ -2155,7 +2164,7 @@ namespace VsMcp.Extension.Tools
             }));
         }
 
-        private static void PerformDrag(int startX, int startY, int endX, int endY, int steps, int delayMs, bool restoreCursor = false)
+        internal static void PerformDrag(int startX, int startY, int endX, int endY, int steps, int delayMs, bool restoreCursor = false) // Extended: internal (ui_window_drag)
         {
             WithCursorRestore(restoreCursor, () => WithDpiAwareness(() =>
             {
@@ -2176,7 +2185,7 @@ namespace VsMcp.Extension.Tools
             }));
         }
 
-        private static AutomationElement FindScrollPatternProvider(AutomationElement element)
+        internal static AutomationElement FindScrollPatternProvider(AutomationElement element) // Extended: internal (ui_window_mouse_wheel)
         {
             var current = element;
             while (current != null)
@@ -2195,7 +2204,7 @@ namespace VsMcp.Extension.Tools
             return null;
         }
 
-        private static bool TryScrollWithPattern(AutomationElement element, int clicks, bool horizontal)
+        internal static bool TryScrollWithPattern(AutomationElement element, int clicks, bool horizontal) // Extended: internal (ui_window_mouse_wheel)
         {
             var provider = FindScrollPatternProvider(element);
             if (provider == null)
@@ -2466,9 +2475,9 @@ namespace VsMcp.Extension.Tools
             return dot >= 0 ? name.Substring(dot + 1) : name;
         }
 
-        private enum StringMatchMode { Any, Exact, Contains, Regex }
+        internal enum StringMatchMode { Any, Exact, Contains, Regex } // Extended: internal (ui_window_find_elements)
 
-        private sealed class FindCriteria
+        internal sealed class FindCriteria // Extended: internal (ui_window_find_elements)
         {
             public string Name;
             public StringMatchMode NameMode;
@@ -2486,7 +2495,7 @@ namespace VsMcp.Extension.Tools
             public HashSet<string> RequiredPatterns;
         }
 
-        private static StringMatchMode ParseMatchMode(string s, StringMatchMode fallback)
+        internal static StringMatchMode ParseMatchMode(string s, StringMatchMode fallback) // Extended: internal (ui_window_find_elements)
         {
             if (string.IsNullOrEmpty(s)) return fallback;
             switch (s.ToLowerInvariant())
@@ -2537,7 +2546,7 @@ namespace VsMcp.Extension.Tools
             }
         }
 
-        private static bool MatchesCriteria(AutomationElement element, FindCriteria c)
+        internal static bool MatchesCriteria(AutomationElement element, FindCriteria c) // Extended: internal (ui_window_find_elements)
         {
             try
             {
@@ -2620,7 +2629,7 @@ namespace VsMcp.Extension.Tools
             catch { }
         }
 
-        private static ControlType ParseControlType(string controlTypeName)
+        internal static ControlType ParseControlType(string controlTypeName) // Extended: internal (ui_window_* tools)
         {
             // Support both "ControlType.Button" and "Button" formats
             var name = controlTypeName;
