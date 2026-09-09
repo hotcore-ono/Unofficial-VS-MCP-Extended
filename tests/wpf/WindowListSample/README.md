@@ -47,6 +47,20 @@ Win32 ポップアップメニュー（`Win32MenuInterop.ShowPopupMenu`）の項
 - `TrackPopupMenuEx` はメニューが閉じるまで UI スレッドでモーダルループを回す。そのため `Win32MenuResultText` の更新はメニューが閉じた後になる（表示中は WPF のイベントハンドラーから戻らない）。
 - メニューの表示座標はスクリーン物理 px で指定する。`Visual.PointToScreen` は内部で `CompositionTarget.TransformToDevice` を適用済みのため、コード側で DPI 換算を重ねていない（DPI 125% の実機で、ボタン直下・カーソル位置に開くことを確認済み。fixture 作成時に単体起動 + UIA クライアントで確認。Exp 経由の検証は verify8）。
 
+## safety / 多数ウィンドウ検証用 UI（MainWindow 4 列目）
+
+| 操作 | 操作対象 AutomationId | 結果表示 AutomationId | 期待する表示 |
+|---|---|---|---|
+| 無効ボタンへのクリック | `DisabledTestButton`（`IsEnabled=False`） | `DisabledClickCountText` | 変化しないこと（初期 `DisabledClick: 0`。誤って起動された場合だけ `DisabledClick: N` になる） |
+| 多数ウィンドウを開く | `OpenManyWindowsButton` | `ManyWindowsCountText` | `ManyWindows: 22`（初期 `ManyWindows: 0`） |
+| 多数ウィンドウを閉じる | `CloseManyWindowsButton` | `ManyWindowsCountText` | `ManyWindows: 0` |
+
+補足:
+
+- `OpenManyWindowsButton` は `Many Window 1`〜`Many Window 22` というタイトルの `SampleDialog` を `Show()` で開く（`Owner` = MainWindow、`ShowInTaskbar=false`、200 × 100、左上を 20 px ずつずらす）。可視トップレベルウィンドウが 22 個増えるため、20 件を超える列挙・打ち切りの確認に使う。
+- `Many Window k` は 200 × 100 に縮めてあるため `CloseDialogButton` が枠内に収まらない。個別に閉じずに `CloseManyWindowsButton` でまとめて閉じる（MainWindow を閉じた場合も Owner 付きのため一緒に閉じる）。
+- オフスクリーン要素の確認には既存 `ScrollableArea` の `ScrollItem40` を使う（スクロールしない限り `IsOffscreen=true`）。
+
 ## 使い方（Experimental Instance での検証手順）
 
 ```text

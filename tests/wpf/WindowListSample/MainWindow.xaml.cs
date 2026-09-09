@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Windows;
 using System.Windows.Automation;
@@ -23,6 +24,21 @@ namespace WindowListSample
         /// <summary>スクロール検証用に生成する項目数。</summary>
         private const int _SCROLL_ITEM_COUNT = 40;
 
+        /// <summary>OpenManyWindowsButton で開く Window の数（20 件を超えるウィンドウ列挙・打ち切りの検証用）。</summary>
+        private const int _MANY_WINDOW_COUNT = 22;
+
+        /// <summary>OpenManyWindowsButton で開く Window の幅。</summary>
+        private const int _MANY_WINDOW_WIDTH = 200;
+
+        /// <summary>OpenManyWindowsButton で開く Window の高さ。</summary>
+        private const int _MANY_WINDOW_HEIGHT = 100;
+
+        /// <summary>OpenManyWindowsButton で開く Window の 1 つ目をメインウィンドウ左上からずらす量。</summary>
+        private const int _MANY_WINDOW_OFFSET_BASE = 40;
+
+        /// <summary>OpenManyWindowsButton で開く Window を 1 つずつ重ならないようにずらす量。</summary>
+        private const int _MANY_WINDOW_OFFSET_STEP = 20;
+
         /// <summary>ClickTestButton がクリックされた回数。</summary>
         private int _ClickCount;
 
@@ -40,6 +56,12 @@ namespace WindowListSample
 
         /// <summary>DragSource 上で左ボタンが押され、ドラッグ追跡中であるかどうか。</summary>
         private bool _IsDragArmed;
+
+        /// <summary>DisabledTestButton の Click が発火した回数（無効要素への操作が拒否される限り 0 のまま）。</summary>
+        private int _DisabledClickCount;
+
+        /// <summary>OpenManyWindowsButton で開いた Window の一覧（CloseManyWindowsButton で全て閉じる）。</summary>
+        private readonly List<SampleDialog> _ManyWindows = new List<SampleDialog>();
 
         /// <summary>コンストラクタ。XAML を読み込む。</summary>
         public MainWindow()
@@ -471,6 +493,77 @@ namespace WindowListSample
             {
                 Win32MenuResultText.Text = $"Win32Menu: selected {TheCommandId}";
             }
+        }
+
+        /// <summary>
+        /// DisabledTestButton のクリック回数を数えて表示する。
+        /// ボタンは IsEnabled=False のため通常は呼ばれない（無効要素への操作が拒否されることを
+        /// DisabledClickCountText が "DisabledClick: 0" のままであることで確認するための検出器）。
+        /// </summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnDisabledTestClick(object InSender, RoutedEventArgs InArgs)
+        {
+            _DisabledClickCount++;
+            DisabledClickCountText.Text = $"DisabledClick: {_DisabledClickCount}";
+        }
+
+        /// <summary>
+        /// _MANY_WINDOW_COUNT 個の非モーダル Window を位置をずらしながら開く（20 件を超えるウィンドウ列挙・打ち切りの検証用）。
+        /// タスクバーを埋めないように ShowInTaskbar=false とし、Owner をメインウィンドウにして親子関係を明確にする。
+        /// </summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnOpenManyWindowsClick(object InSender, RoutedEventArgs InArgs)
+        {
+            for (int TheIndex = 1; TheIndex <= _MANY_WINDOW_COUNT; TheIndex++)
+            {
+                double TheOffset = _MANY_WINDOW_OFFSET_BASE + ((TheIndex - 1) * _MANY_WINDOW_OFFSET_STEP);
+                SampleDialog TheWindow = new SampleDialog($"Many Window {TheIndex}");
+                TheWindow.Owner = this;
+                TheWindow.ShowInTaskbar = false;
+                TheWindow.WindowStartupLocation = WindowStartupLocation.Manual;
+                TheWindow.Width = _MANY_WINDOW_WIDTH;
+                TheWindow.Height = _MANY_WINDOW_HEIGHT;
+                TheWindow.Left = Left + TheOffset;
+                TheWindow.Top = Top + TheOffset;
+                TheWindow.Closed += OnManyWindowClosed;
+                _ManyWindows.Add(TheWindow);
+                TheWindow.Show();
+            }
+            UpdateManyWindowsCountText();
+        }
+
+        /// <summary>OpenManyWindowsButton で開いた Window をすべて閉じる（列挙結果が元に戻ることの確認用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnCloseManyWindowsClick(object InSender, RoutedEventArgs InArgs)
+        {
+            // Close の中で OnManyWindowClosed が _ManyWindows を変更するため、複製を走査する
+            foreach (SampleDialog TheWindow in _ManyWindows.ToArray())
+            {
+                TheWindow.Close();
+            }
+            UpdateManyWindowsCountText();
+        }
+
+        /// <summary>OpenManyWindowsButton で開いた Window が閉じられたときに一覧から取り除いて表示を更新する。</summary>
+        /// <param name="InSender">閉じられた Window。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnManyWindowClosed(object? InSender, EventArgs InArgs)
+        {
+            if (InSender is SampleDialog TheWindow)
+            {
+                TheWindow.Closed -= OnManyWindowClosed;
+                _ManyWindows.Remove(TheWindow);
+            }
+            UpdateManyWindowsCountText();
+        }
+
+        /// <summary>OpenManyWindowsButton で開いている Window の数を ManyWindowsCountText に反映する。</summary>
+        private void UpdateManyWindowsCountText()
+        {
+            ManyWindowsCountText.Text = $"ManyWindows: {_ManyWindows.Count}";
         }
     }
 }

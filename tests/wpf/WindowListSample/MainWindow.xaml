@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:WindowListSample"
         Title="WindowListSample Main"
-        Width="1240" Height="720"
+        Width="1540" Height="720"
         WindowStartupLocation="CenterScreen">
     <StackPanel Orientation="Horizontal" Margin="24" VerticalAlignment="Center" HorizontalAlignment="Center">
     <StackPanel Margin="0,0,24,0" VerticalAlignment="Top">
@@ -98,6 +98,14 @@
         <Button x:Name="ShowWin32MenuButton" AutomationProperties.AutomationId="ShowWin32MenuButton" Content="Show Win32 Menu" Width="280" Height="30" Margin="0,4,0,0"
                 Click="OnShowWin32MenuButtonClick" />
         <TextBlock x:Name="Win32MenuResultText" AutomationProperties.AutomationId="Win32MenuResultText" Text="Win32Menu: (none)" Width="280" Margin="0,4,0,0" />
+    </StackPanel>
+    <StackPanel VerticalAlignment="Top" Margin="24,0,0,0">
+        <TextBlock Text="safety / 多数ウィンドウ検証用" FontSize="18" Margin="0,0,0,16" />
+        <Button AutomationProperties.AutomationId="DisabledTestButton" Content="Disabled Button" Width="280" Height="30" IsEnabled="False" Click="OnDisabledTestClick" />
+        <TextBlock x:Name="DisabledClickCountText" AutomationProperties.AutomationId="DisabledClickCountText" Text="DisabledClick: 0" Width="280" Margin="0,4,0,16" />
+        <Button AutomationProperties.AutomationId="OpenManyWindowsButton" Content="Open 22 Windows" Width="280" Height="30" Click="OnOpenManyWindowsClick" />
+        <Button AutomationProperties.AutomationId="CloseManyWindowsButton" Content="Close Many Windows" Width="280" Height="30" Margin="0,8,0,0" Click="OnCloseManyWindowsClick" />
+        <TextBlock x:Name="ManyWindowsCountText" AutomationProperties.AutomationId="ManyWindowsCountText" Text="ManyWindows: 0" Width="280" Margin="0,4,0,0" />
     </StackPanel>
     </StackPanel>
 </Window>
