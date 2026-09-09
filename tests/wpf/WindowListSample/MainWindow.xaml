@@ -3,9 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:WindowListSample"
         Title="WindowListSample Main"
-        Width="640" Height="400"
+        Width="900" Height="520"
         WindowStartupLocation="CenterScreen">
-    <StackPanel Margin="24" VerticalAlignment="Center" HorizontalAlignment="Center">
+    <StackPanel Orientation="Horizontal" Margin="24" VerticalAlignment="Center" HorizontalAlignment="Center">
+    <StackPanel Margin="0,0,24,0" VerticalAlignment="Top">
         <TextBlock Text="ui_list_windows 検証用" FontSize="18" Margin="0,0,0,16" />
         <Button x:Name="OpenOwnedDialogButton"
                 AutomationProperties.AutomationId="OpenOwnedDialogButton"
@@ -33,5 +34,19 @@
                 Width="280" Height="36"
                 Click="OnOpenAutoCloseWindowClick" />
         <local:ChildWindowHost x:Name="ChildHost" Width="280" Height="24" Margin="0,12,0,0" />
+    </StackPanel>
+    <StackPanel VerticalAlignment="Top">
+        <TextBlock Text="standard_dialog_* 検証用" FontSize="18" Margin="0,0,0,16" />
+        <Button AutomationProperties.AutomationId="ShowMessageBoxOkButton" Content="MessageBox OK" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowMessageBoxOkClick" />
+        <Button AutomationProperties.AutomationId="ShowMessageBoxOkCancelButton" Content="MessageBox OKCancel" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowMessageBoxOkCancelClick" />
+        <Button AutomationProperties.AutomationId="ShowMessageBoxYesNoButton" Content="MessageBox YesNo" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowMessageBoxYesNoClick" />
+        <Button AutomationProperties.AutomationId="ShowMessageBoxYesNoCancelButton" Content="MessageBox YesNoCancel" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowMessageBoxYesNoCancelClick" />
+        <Button AutomationProperties.AutomationId="ShowMessageBoxYesNoCancelDefaultNoButton" Content="MessageBox YesNoCancel（既定 No）" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowMessageBoxYesNoCancelDefaultNoClick" />
+        <Button AutomationProperties.AutomationId="ShowMessageBoxRetryCancelButton" Content="MessageBox RetryCancel" Width="280" Height="30" Margin="0,0,0,16" Click="OnShowMessageBoxRetryCancelClick" />
+        <Button AutomationProperties.AutomationId="ShowTaskDialogOkCancelButton" Content="TaskDialog OK / Cancel" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowTaskDialogOkCancelClick" />
+        <Button AutomationProperties.AutomationId="ShowTaskDialogYesNoButton" Content="TaskDialog Yes / No" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowTaskDialogYesNoClick" />
+        <Button AutomationProperties.AutomationId="ShowTaskDialogCustomButton" Content="TaskDialog Custom（TaskDialogIndirect）" Width="280" Height="30" Click="OnShowTaskDialogCustomClick" />
+        <TextBlock x:Name="LastDialogResultText" Text="最後の結果: (なし)" Margin="0,12,0,0" AutomationProperties.AutomationId="LastDialogResultText" />
+    </StackPanel>
     </StackPanel>
 </Window>

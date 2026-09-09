@@ -9,6 +9,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>WindowListSample</RootNamespace>
     <AssemblyName>WindowListSample</AssemblyName>
+    <!-- TaskDialog の検証に comctl32 v6 が必要 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
 </Project>
