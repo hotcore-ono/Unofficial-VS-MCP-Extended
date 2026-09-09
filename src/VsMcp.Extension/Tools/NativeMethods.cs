@@ -294,4 +294,70 @@ internal static extern uint MapVirtualKey(uint uCode, uint uMapType);
     internal const uint CB_GETCURSEL = 0x0147;
     internal const uint CB_GETLBTEXT = 0x0148;
     internal const uint CB_GETLBTEXTLEN = 0x0149;
+
+    // ------------------------------------------------------------------
+    // Extended additions (Phase 8): ポップアップメニュー（Win32 #32768 / WPF ContextMenu）の構造取得
+    // （UiPopupMenuResolver）で使う Win32 API。
+    // 既存宣言（MonitorFromWindow / GetMonitorInfoW / GetDpiForWindow / WindowFromPoint / GetCursorPos /
+    // SendMessageTimeoutW / GetWindowLongW）はそのまま再利用し、ここでは重複宣言しない。
+    // メニューの作成系（CreatePopupMenu / AppendMenuW / TrackPopupMenuEx / DestroyMenu）は拡張には入れない
+    // （検証アプリ側の fixture が持つ）。
+    // ------------------------------------------------------------------
+
+    [DllImport("user32.dll")]
+    internal static extern int GetMenuItemCount(IntPtr hMenu);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetMenuItemInfoW(IntPtr hMenu, uint uItem, [MarshalAs(UnmanagedType.Bool)] bool fByPosition, ref MENUITEMINFOW lpmii);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern int GetMenuStringW(IntPtr hMenu, uint uIDItem, System.Text.StringBuilder lpString, int cchMax, uint flags);
+
+    /// <summary>
+    /// GetMenuItemInfoW 用。fMask で要求した項目だけが設定される。
+    /// dwTypeData は文字列を受け取らない使い方（MIIM_STRING で長さのみ）を想定して IntPtr で宣言し、
+    /// 表示文字列は GetMenuStringW で取得する。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MENUITEMINFOW
+    {
+        public uint cbSize;
+        public uint fMask;
+        public uint fType;
+        public uint fState;
+        public uint wID;
+        public IntPtr hSubMenu;
+        public IntPtr hbmpChecked;
+        public IntPtr hbmpUnchecked;
+        public IntPtr dwItemData;
+        public IntPtr dwTypeData;
+        public uint cch;
+        public IntPtr hbmpItem;
+    }
+
+    // ポップアップメニューウィンドウ（#32768）から HMENU を得るメッセージ
+    internal const uint MN_GETHMENU = 0x01E1;
+
+    // GetMenuItemInfoW の fMask
+    internal const uint MIIM_STATE = 0x00000001;
+    internal const uint MIIM_ID = 0x00000002;
+    internal const uint MIIM_SUBMENU = 0x00000004;
+    internal const uint MIIM_STRING = 0x00000040;
+    internal const uint MIIM_FTYPE = 0x00000100;
+
+    // GetMenuItemInfoW の fType: セパレータ（UIA の MenuItem には現れない）
+    internal const uint MFT_SEPARATOR = 0x00000800;
+
+    // GetMenuItemInfoW の fState（MFS_DISABLED は MFS_GRAYED を含む）
+    internal const uint MFS_DISABLED = 0x00000003;
+    internal const uint MFS_CHECKED = 0x00000008;
+
+    // GetMenuStringW の flags（位置指定）
+    internal const uint MF_BYPOSITION = 0x00000400;
+
+    // MONITORINFOEX.dwFlags: プライマリモニター
+    internal const uint MONITORINFOF_PRIMARY = 0x00000001;
+
+    // GetWindowLongW の nIndex と拡張スタイル
+    internal const int GWL_EXSTYLE = -20;
+    internal const int WS_EX_TOOLWINDOW = 0x00000080;
 }

@@ -18,15 +18,14 @@ namespace VsMcp.Extension.Tools
     /// 実行順は必ず: 要素を指定ウィンドウ配下で一意に解決 → 要素のトップレベル HWND が指定ウィンドウと一致することを確認 →
     /// ウィンドウ状態を再列挙してモーダル判定（無効化された owner は拒否）→ はじめて Invoke / 入力注入。
     /// 入力注入・座標検証・ScrollPattern は upstream UiTools の internal ヘルパーをそのまま使い、同等ロジックを複製しない。
+    /// Extended (Phase 8): 共通の前段（ウィンドウ状態の再評価・要素解決・座標ゲート・カーソル復元・Geometry の取り直し）は
+    /// <see cref="UiInteractionContext"/> へ移し、ui_menu_* と共用する。戻り値の JSON キー・method 名・エラー文は Phase 7 と同じ。
     /// upstream の public Tool schema は変更しない。
     /// </summary>
     public static class UiWindowActionTools
     {
         /// <summary>waitMs の上限（upstream ui_click と同じ）。</summary>
         private const int _MAX_WAIT_MS = 10000;
-
-        /// <summary>SetForegroundWindow 後に描画・Z 順の反映を待つ時間（upstream と同じ 100 ms）。</summary>
-        private const int _FOREGROUND_SETTLE_MS = 100;
 
         /// <summary>right_click 後にポップアップ／コンテキストメニューの出現を観測する既定の待ち時間。</summary>
         private const int _DEFAULT_OBSERVE_MS = 300;
@@ -36,9 +35,6 @@ namespace VsMcp.Extension.Tools
 
         /// <summary>PostMessage の WM_MOUSEWHEEL がスクロールへ反映されるのを待つ時間（効果の検証用）。</summary>
         private const int _POST_MESSAGE_SETTLE_MS = 200;
-
-        /// <summary>Extended: Win32 のポップアップメニュー（コンテキストメニュー）のウィンドウクラス名。</summary>
-        private const string _WIN32_MENU_CLASS_NAME = "#32768";
 
         /// <summary>Extended: right_click 後にポップアップかどうかを内容で調べるウィンドウ数の上限。</summary>
         private const int _MAX_POPUP_CANDIDATES = 10;
@@ -109,8 +105,10 @@ namespace VsMcp.Extension.Tools
                     "menu that was just closed, 'newWindows' can be empty even though the menu is open; therefore 'popupWindows' additionally reports the visible " +
                     "top-level windows (other than the target window, at most 10 inspected) that are menus by CONTENT — window class '#32768' or a UIA subtree " +
                     "containing Menu / MenuItem elements — each with 'isNew' (whether it is also in 'newWindows') and 'menuItemCount' (number of MenuItem elements " +
-                    "in its subtree, null for a '#32768' window). 'contextMenuObserved' is true when 'popupWindows' is not empty. Pass popupWindows[i].handle as " +
-                    "'windowHandle' to ui_window_click to invoke a MenuItem of that menu by 'automationId' / 'name'. " + TheSafetyDescription,
+                    "in its subtree, null for a '#32768' window). 'contextMenuObserved' is true when 'popupWindows' is not empty. 'menuHandles' additionally lists the " +
+                    "HWNDs of those popups that ui_menu_detect classifies as a real menu (win32Menu / wpfContextMenu) — pass one of them to ui_menu_get_info / " +
+                    "ui_menu_select. Pass popupWindows[i].handle as 'windowHandle' to ui_window_click to invoke a MenuItem of that menu by 'automationId' / 'name'. " +
+                    TheSafetyDescription,
                     SchemaBuilder.Create()
                         .AddInteger("windowHandle", "HWND of the window that contains the element (decimal)", required: true)
                         .AddString("automationId", "AutomationId of the element (exact)")
@@ -184,85 +182,30 @@ namespace VsMcp.Extension.Tools
         }
 
         /// <summary>
-        /// Action 共通の前段: ウィンドウ状態の再列挙とモーダル判定（UiWindowActionValidator）→ 要素の一意解決と所属 HWND 検証（UiWindowElementResolver）→
-        /// 要素の有効性。物理入力を伴う場合は IsOffscreen と bounds の有無も確認する。STA スレッドで呼ぶこと。
+        /// Action 共通の前段: <see cref="UiInteractionContext"/> の生成（ウィンドウ状態の再列挙とモーダル判定、Geometry の取得）→
+        /// 要素の一意解決と所属 HWND 検証 → 要素の有効性。物理入力を伴う場合は IsOffscreen と bounds の有無も確認する。
+        /// Phase 7 と同じ順序・同じ文言（実装だけを Context へ移した）。STA スレッドで呼ぶこと。
         /// </summary>
         /// <param name="InWindow">正規化済みのトップレベル HWND。</param>
         /// <param name="InProcessIds">デバッグ中プロセス ID の集合。</param>
         /// <param name="InSelector">要素セレクター。</param>
         /// <param name="InIsPhysical">物理入力（座標）を伴う操作か。</param>
         /// <param name="InRole">エラーメッセージの接頭辞（"Drag source" 等）。空なら付けない。</param>
-        /// <param name="OutWindowInfo">対象ウィンドウの WindowInfo。</param>
+        /// <param name="OutContext">生成した Interaction Context。エラー時は null のことがある。</param>
         /// <param name="OutElement">解決した要素。</param>
         /// <param name="OutFailure">要素を解決できなかった理由。要素解決まで到達しなかった場合と正常時は None。</param>
         /// <returns>エラーメッセージ。正常なら null。</returns>
         private static string PrepareElementAction(IntPtr InWindow, HashSet<uint> InProcessIds, UiWindowElementSelector InSelector, bool InIsPhysical, string InRole,
-            out WindowInfo OutWindowInfo, out UiWindowResolvedElement OutElement, out UiWindowResolveFailure OutFailure)
+            out UiInteractionContext OutContext, out UiWindowResolvedElement OutElement, out UiWindowResolveFailure OutFailure)
         {
             OutElement = null;
             OutFailure = UiWindowResolveFailure.None;
-            string TheTargetError = UiWindowActionValidator.ValidateActionTarget(InWindow, InProcessIds, out OutWindowInfo, out UiWindowModalState TheState);
+            string TheTargetError = UiInteractionContext.TryCreate(InWindow, InProcessIds, out OutContext);
             if (TheTargetError != null)
             {
                 return TheTargetError;
             }
-
-            string ThePrefix = string.IsNullOrEmpty(InRole) ? string.Empty : InRole + ": ";
-            string TheResolveError = UiWindowElementResolver.TryResolveSingle(InWindow, InSelector, out OutElement, out OutFailure);
-            if (TheResolveError != null)
-            {
-                return ThePrefix + TheResolveError;
-            }
-            if (!OutElement.IsEnabled)
-            {
-                return $"{ThePrefix}Element with {InSelector.Describe()} is disabled (IsEnabled=false); refusing to act on it";
-            }
-            if (InIsPhysical)
-            {
-                string TheBoundsError = DescribePhysicalPrerequisite(OutElement, InSelector);
-                if (TheBoundsError != null)
-                {
-                    return ThePrefix + TheBoundsError;
-                }
-            }
-            return null;
-        }
-
-        /// <summary>座標を使う操作の前提（画面上にあり、bounds がある）を確認する。</summary>
-        /// <param name="InElement">解決済み要素。</param>
-        /// <param name="InSelector">セレクター（メッセージ用）。</param>
-        /// <returns>エラーメッセージ。正常なら null。</returns>
-        private static string DescribePhysicalPrerequisite(UiWindowResolvedElement InElement, UiWindowElementSelector InSelector)
-        {
-            if (InElement.IsOffscreen)
-            {
-                return $"Element with {InSelector.Describe()} is offscreen (IsOffscreen=true); scroll it into view first";
-            }
-            if (InElement.Bounds.IsEmpty || InElement.Bounds.Width <= 0 || InElement.Bounds.Height <= 0)
-            {
-                return $"Element with {InSelector.Describe()} has no bounding rectangle; cannot perform a physical mouse action on it";
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// 物理入力の直前の座標ゲート: 対象ウィンドウの矩形内 → 対象ウィンドウを前面化して描画を待つ → その点の最前面が対象ウィンドウであること。
-        /// </summary>
-        /// <param name="InWindow">対象のトップレベル HWND。</param>
-        /// <param name="InX">スクリーン X（物理 px）。</param>
-        /// <param name="InY">スクリーン Y（物理 px）。</param>
-        /// <param name="InWhat">メッセージ用の点の呼び名。</param>
-        /// <returns>エラーメッセージ。正常なら null。</returns>
-        private static string PreparePhysicalPoint(IntPtr InWindow, int InX, int InY, string InWhat)
-        {
-            string TheRectError = UiTools.ValidateCoordinatesInWindow(InWindow, InX, InY);
-            if (TheRectError != null)
-            {
-                return TheRectError;
-            }
-            SetForegroundWindow(InWindow);
-            System.Threading.Thread.Sleep(_FOREGROUND_SETTLE_MS);
-            return UiWindowActionValidator.ValidatePhysicalPoint(InWindow, InX, InY, InWhat);
+            return OutContext.ResolveElement(InSelector, InIsPhysical, InRole, out OutElement, out OutFailure);
         }
 
         /// <summary>戻り値用のウィンドウ要約。</summary>
@@ -307,11 +250,12 @@ namespace VsMcp.Extension.Tools
                 TheResult = await UiTools.RunUiaWithTimeoutAsync(() =>
                 {
                     string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, false, null,
-                        out WindowInfo TheWindowInfo, out UiWindowResolvedElement TheElement, out _);
+                        out UiInteractionContext TheContext, out UiWindowResolvedElement TheElement, out _);
                     if (TheActionError != null)
                     {
                         return McpToolResult.Error(TheActionError);
                     }
+                    WindowInfo TheWindowInfo = TheContext.WindowInfo;
 
                     if (TheElement.Element.TryGetCurrentPattern(InvokePattern.Pattern, out object TheInvoke))
                     {
@@ -325,14 +269,15 @@ namespace VsMcp.Extension.Tools
                         });
                     }
 
-                    string TheBoundsError = DescribePhysicalPrerequisite(TheElement, TheSelector);
+                    string TheBoundsError = UiInteractionContext.DescribePhysicalPrerequisite(TheElement, TheSelector);
                     if (TheBoundsError != null)
                     {
                         return McpToolResult.Error("Element does not support InvokePattern and a physical click is not possible: " + TheBoundsError);
                     }
                     int TheClickX = TheElement.CenterX;
                     int TheClickY = TheElement.CenterY;
-                    string ThePointError = PreparePhysicalPoint(TheWindow, TheClickX, TheClickY, "click point");
+                    TheContext.RefreshGeometry();
+                    string ThePointError = TheContext.PreparePhysicalPoint(TheClickX, TheClickY, "click point");
                     if (ThePointError != null)
                     {
                         return McpToolResult.Error(ThePointError);
@@ -433,15 +378,17 @@ namespace VsMcp.Extension.Tools
                 TheResult = await UiTools.RunUiaWithTimeoutAsync(() =>
                 {
                     string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, true, null,
-                        out WindowInfo TheWindowInfo, out UiWindowResolvedElement TheElement, out _);
+                        out UiInteractionContext TheContext, out UiWindowResolvedElement TheElement, out _);
                     if (TheActionError != null)
                     {
                         return McpToolResult.Error(TheActionError);
                     }
+                    WindowInfo TheWindowInfo = TheContext.WindowInfo;
 
                     int TheX = TheElement.CenterX;
                     int TheY = TheElement.CenterY;
-                    string ThePointError = PreparePhysicalPoint(TheWindow, TheX, TheY, InPointName);
+                    TheContext.RefreshGeometry();
+                    string ThePointError = TheContext.PreparePhysicalPoint(TheX, TheY, InPointName);
                     if (ThePointError != null)
                     {
                         return McpToolResult.Error(ThePointError);
@@ -455,19 +402,20 @@ namespace VsMcp.Extension.Tools
                     // コンテキストメニューを開く時点のカーソル位置が要素外になり、メニューが開かない（Phase 7 実測）。
                     bool IsRestoredAfterObservation = IsCursorRestored && InObserveMs.HasValue;
                     POINT TheSavedCursor = new POINT();
-                    bool HasSavedCursor = IsRestoredAfterObservation && UiTools.WithDpiAwareness(() => GetCursorPos(out TheSavedCursor));
+                    bool HasSavedCursor = IsRestoredAfterObservation && TheContext.TrySaveCursor(out TheSavedCursor);
 
                     UiTools.WithBlockedInput(IsInputBlocked, () => InPerform(TheX, TheY, IsCursorRestored && !IsRestoredAfterObservation));
 
                     List<object> TheNewWindows = null;
                     List<object> ThePopupWindows = null;
+                    List<long> TheMenuHandles = null;
                     bool? IsContextMenuObserved = null;
                     if (InObserveMs.HasValue)
                     {
                         System.Threading.Thread.Sleep(InObserveMs.Value);
                         if (HasSavedCursor)
                         {
-                            UiTools.WithDpiAwareness(() => SetCursorPos(TheSavedCursor.X, TheSavedCursor.Y));
+                            TheContext.RestoreCursor(TheSavedCursor);
                         }
                         List<WindowInfo> TheWindowsAfter = DebuggeeWindowEnumerator.EnumerateTopLevelWindows(TheProcessIds, false);
                         TheNewWindows = TheWindowsAfter
@@ -483,7 +431,7 @@ namespace VsMcp.Extension.Tools
                             })
                             .ToList();
                         // Extended: 差分（newWindows）は閉じたばかりのメニューと同じ HWND が再利用されると 0 件になるため、内容でも検出する
-                        ThePopupWindows = CollectPopupWindows(TheWindowsAfter, TheWindow, TheWindowsBefore);
+                        ThePopupWindows = CollectPopupWindows(TheWindowsAfter, TheWindow, TheWindowsBefore, out TheMenuHandles);
                         IsContextMenuObserved = ThePopupWindows.Count > 0;
                     }
 
@@ -497,6 +445,7 @@ namespace VsMcp.Extension.Tools
                         clickY = TheY,
                         newWindows = TheNewWindows,
                         popupWindows = ThePopupWindows,
+                        menuHandles = TheMenuHandles,
                         contextMenuObserved = IsContextMenuObserved,
                         observeMs = InObserveMs,
                     });
@@ -526,10 +475,12 @@ namespace VsMcp.Extension.Tools
         /// <param name="InWindows">観測待ちの後に列挙した可視トップレベルウィンドウ。</param>
         /// <param name="InWindow">右クリックした対象のトップレベル HWND。</param>
         /// <param name="InWindowsBefore">クリック前に存在した可視トップレベル HWND の集合（isNew の判定用）。</param>
+        /// <param name="OutMenuHandles">ポップアップのうち win32Menu / wpfContextMenu として分類できたものの HWND（ui_menu_* へ渡せる）。</param>
         /// <returns>ポップアップと判定したウィンドウの一覧（handle / className / title / bounds / ownerHandle / isEnabled / isNew / menuItemCount）。</returns>
-        private static List<object> CollectPopupWindows(List<WindowInfo> InWindows, IntPtr InWindow, HashSet<long> InWindowsBefore)
+        private static List<object> CollectPopupWindows(List<WindowInfo> InWindows, IntPtr InWindow, HashSet<long> InWindowsBefore, out List<long> OutMenuHandles)
         {
             List<object> ThePopupWindows = new List<object>();
+            OutMenuHandles = new List<long>();
             long TheTargetHandle = InWindow.ToInt64();
             int TheInspectedCount = 0;
             foreach (WindowInfo TheCandidate in InWindows)
@@ -544,9 +495,9 @@ namespace VsMcp.Extension.Tools
                 }
                 TheInspectedCount++;
 
-                bool IsWin32Menu = string.Equals(TheCandidate.ClassName, _WIN32_MENU_CLASS_NAME, StringComparison.Ordinal);
+                bool IsWin32Menu = string.Equals(TheCandidate.ClassName, UiPopupMenuResolver.Win32MenuClassName, StringComparison.Ordinal);
                 int TheMenuItemCount = 0;
-                if (!IsWin32Menu && !HasMenuElements(new IntPtr(TheCandidate.Handle), out TheMenuItemCount))
+                if (!IsWin32Menu && !UiPopupMenuResolver.HasMenuElements(new IntPtr(TheCandidate.Handle), out TheMenuItemCount))
                 {
                     continue;
                 }
@@ -561,52 +512,15 @@ namespace VsMcp.Extension.Tools
                     isNew = !InWindowsBefore.Contains(TheCandidate.Handle),
                     menuItemCount = IsWin32Menu ? (int?)null : TheMenuItemCount,
                 });
+
+                // Extended (Phase 8): 内容分類まで通ったものだけを menuHandles として返す（popupWindows の判定は Phase 7 のまま）。
+                // ここは「メニューかどうか」だけが要るので項目照会のリトライは無効化する（候補ごとに数百 ms の待ちが積み上がるため）
+                if (UiPopupMenuResolver.Classify(TheCandidate, false, out UiMenuInfo TheMenu, out _) && UiPopupMenuResolver.IsKnownMenuType(TheMenu.MenuType))
+                {
+                    OutMenuHandles.Add(TheCandidate.Handle);
+                }
             }
             return ThePopupWindows;
-        }
-
-        /// <summary>
-        /// Extended: ウィンドウの UIA 部分木（コントロールビュー）に Menu / MenuItem があるかを調べる。
-        /// 要素が消えた・アクセスできない等の失敗は「該当なし」として扱う。
-        /// </summary>
-        /// <param name="InHandle">調べるトップレベル HWND。</param>
-        /// <param name="OutMenuItemCount">部分木に含まれる MenuItem の数。該当なしのときは 0。</param>
-        /// <returns>Menu または MenuItem が 1 つ以上あれば true。</returns>
-        private static bool HasMenuElements(IntPtr InHandle, out int OutMenuItemCount)
-        {
-            OutMenuItemCount = 0;
-            try
-            {
-                AutomationElement TheRoot = AutomationElement.FromHandle(InHandle);
-                if (TheRoot == null)
-                {
-                    return false;
-                }
-                Condition TheCondition = new AndCondition(
-                    new PropertyCondition(AutomationElement.IsControlElementProperty, true),
-                    new OrCondition(
-                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Menu),
-                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.MenuItem)));
-                AutomationElementCollection TheMatches = TheRoot.FindAll(TreeScope.Subtree, TheCondition);
-                if (TheMatches == null || TheMatches.Count == 0)
-                {
-                    return false;
-                }
-                foreach (AutomationElement TheMatch in TheMatches)
-                {
-                    if (Equals(TheMatch.Current.ControlType, ControlType.MenuItem))
-                    {
-                        OutMenuItemCount++;
-                    }
-                }
-                return true;
-            }
-            catch
-            {
-                // 消えたポップアップ・UIA が使えないウィンドウは「メニューではない」として扱う
-                OutMenuItemCount = 0;
-                return false;
-            }
         }
 
         /// <summary>ui_window_drag の本体。source / target を同じウィンドウ配下で解決し、両方の座標ゲートを通してから upstream PerformDrag を実行する。</summary>
@@ -670,11 +584,12 @@ namespace VsMcp.Extension.Tools
                 return await UiTools.RunUiaWithTimeoutAsync(() =>
                 {
                     string TheSourceActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSourceSelector, true, "Drag source",
-                        out WindowInfo TheWindowInfo, out UiWindowResolvedElement TheSource, out _);
+                        out UiInteractionContext TheContext, out UiWindowResolvedElement TheSource, out _);
                     if (TheSourceActionError != null)
                     {
                         return McpToolResult.Error(TheSourceActionError);
                     }
+                    WindowInfo TheWindowInfo = TheContext.WindowInfo;
                     string TheTargetResolveError = UiWindowElementResolver.TryResolveSingle(TheWindow, TheTargetSelector, out UiWindowResolvedElement TheTarget,
                         out UiWindowResolveFailure TheTargetFailure);
                     if (TheTargetResolveError != null)
@@ -685,7 +600,7 @@ namespace VsMcp.Extension.Tools
                     {
                         return McpToolResult.Error($"Drag target: Element with {TheTargetSelector.Describe()} is disabled (IsEnabled=false); refusing to act on it");
                     }
-                    string TheTargetBoundsError = DescribePhysicalPrerequisite(TheTarget, TheTargetSelector);
+                    string TheTargetBoundsError = UiInteractionContext.DescribePhysicalPrerequisite(TheTarget, TheTargetSelector);
                     if (TheTargetBoundsError != null)
                     {
                         return McpToolResult.Error("Drag target: " + TheTargetBoundsError);
@@ -695,7 +610,8 @@ namespace VsMcp.Extension.Tools
                     int TheStartY = TheSource.CenterY;
                     int TheEndX = TheTarget.CenterX;
                     int TheEndY = TheTarget.CenterY;
-                    string TheStartError = PreparePhysicalPoint(TheWindow, TheStartX, TheStartY, "drag start point");
+                    TheContext.RefreshGeometry();
+                    string TheStartError = TheContext.PreparePhysicalPoint(TheStartX, TheStartY, "drag start point");
                     if (TheStartError != null)
                     {
                         return McpToolResult.Error(TheStartError);
@@ -936,6 +852,7 @@ namespace VsMcp.Extension.Tools
             {
                 TheResult = await UiTools.RunUiaWithTimeoutAsync(() =>
                 {
+                    UiInteractionContext TheContext;
                     WindowInfo TheWindowInfo;
                     UiWindowResolvedElement TheElement = null;
                     int TheX;
@@ -944,11 +861,12 @@ namespace VsMcp.Extension.Tools
 
                     if (TheSelector.HasCriteria)
                     {
-                        string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, false, null, out TheWindowInfo, out TheElement, out _);
+                        string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, false, null, out TheContext, out TheElement, out _);
                         if (TheActionError != null)
                         {
                             return McpToolResult.Error(TheActionError);
                         }
+                        TheWindowInfo = TheContext.WindowInfo;
 
                         if (IsPatternUsed && UiTools.TryScrollWithPattern(TheElement.Element, TheClicks.Value, IsHorizontal))
                         {
@@ -963,7 +881,7 @@ namespace VsMcp.Extension.Tools
                             });
                         }
 
-                        string TheBoundsError = DescribePhysicalPrerequisite(TheElement, TheSelector);
+                        string TheBoundsError = UiInteractionContext.DescribePhysicalPrerequisite(TheElement, TheSelector);
                         if (TheBoundsError != null)
                         {
                             return McpToolResult.Error(TheBoundsError);
@@ -973,11 +891,12 @@ namespace VsMcp.Extension.Tools
                     }
                     else
                     {
-                        string TheTargetError = UiWindowActionValidator.ValidateActionTarget(TheWindow, TheProcessIds, out TheWindowInfo, out UiWindowModalState TheState);
+                        string TheTargetError = UiInteractionContext.TryCreate(TheWindow, TheProcessIds, out TheContext);
                         if (TheTargetError != null)
                         {
                             return McpToolResult.Error(TheTargetError);
                         }
+                        TheWindowInfo = TheContext.WindowInfo;
                         TheX = TheArgX.Value;
                         TheY = TheArgY.Value;
                     }
@@ -1049,7 +968,8 @@ namespace VsMcp.Extension.Tools
                         }
                     }
 
-                    string ThePointError = PreparePhysicalPoint(TheWindow, TheX, TheY, "wheel point");
+                    TheContext.RefreshGeometry();
+                    string ThePointError = TheContext.PreparePhysicalPoint(TheX, TheY, "wheel point");
                     if (ThePointError != null)
                     {
                         return McpToolResult.Error(ThePointError);

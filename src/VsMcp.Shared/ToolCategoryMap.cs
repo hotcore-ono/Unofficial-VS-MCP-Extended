@@ -147,6 +147,12 @@ namespace VsMcp.Shared
             { "ui_window_drag", "UI" }, // Extended
             { "ui_window_mouse_wheel", "UI" }, // Extended
             { "ui_window_wait_idle", "UI" }, // Extended
+            { "ui_menu_detect", "UI" }, // Extended
+            { "ui_menu_get_info", "UI" }, // Extended
+            { "ui_menu_select", "UI" }, // Extended
+            { "ui_menu_capture", "UI" }, // Extended
+            { "ui_menu_wait", "UI" }, // Extended
+            { "ui_menu_wait_closed", "UI" }, // Extended
             // Console
             { "console_read", "Console" },
             { "console_send", "Console" },
