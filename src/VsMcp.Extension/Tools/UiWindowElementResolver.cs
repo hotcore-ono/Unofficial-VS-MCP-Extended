@@ -128,6 +128,9 @@ namespace VsMcp.Extension.Tools
 
         /// <summary>解決の途中で要素が消えた。</summary>
         Disappeared,
+
+        /// <summary>Extended (Phase 9): 訪問要素数の内部上限に達し、候補をすべて見終わる前に走査を打ち切った。</summary>
+        SearchAborted,
     }
 
     /// <summary>
@@ -144,6 +147,12 @@ namespace VsMcp.Extension.Tools
 
         /// <summary>要素が NativeWindowHandle=0 のとき、HWND を持つ祖先を探す最大段数。</summary>
         private const int _MAX_ANCESTOR_DEPTH = 64;
+
+        /// <summary>
+        /// Extended (Phase 9): Action 系ツールの要素解決（<see cref="TryResolveSingle"/>）が訪問する要素数の内部上限。
+        /// 30 秒のタイムアウトだけに頼ると、巨大な UIA ツリーで待たされたうえに部分的な候補で一意性を判断してしまうため。
+        /// </summary>
+        private const int _MAX_VISITED_ELEMENTS = 10000;
 
         /// <summary>
         /// 引数からセレクターを読む。prefix が空なら automationId / name / controlType / className / index、
@@ -232,16 +241,21 @@ namespace VsMcp.Extension.Tools
         /// <param name="InIsOffscreenIncluded">IsOffscreen の要素も含めるか。</param>
         /// <param name="InMaxResults">集める上限。</param>
         /// <param name="InRequiredRootHandle">結果に含める要素の所属トップレベル HWND（10 進）。0 なら所属を判定しない。</param>
+        /// <param name="InWalker">走査に使うビュー（TreeWalker.ControlViewWalker / TreeWalker.RawViewWalker）。</param>
+        /// <param name="InMaxVisited">訪問する要素数の上限（Extended Phase 9: 30 秒タイムアウトとは別の内部上限）。</param>
         /// <param name="InOutResults">結果を追加するリスト。</param>
         /// <param name="InOutSkippedOtherWindows">別ウィンドウ所属として除外した要素数の加算先。</param>
+        /// <param name="InOutVisitedCount">訪問した要素数の加算先（上限に達したら走査を打ち切る）。</param>
         /// <param name="InToken">中断トークン。</param>
         public static void CollectMatches(AutomationElement InRoot, UiTools.FindCriteria InCriteria, bool InIsOffscreenIncluded,
-            int InMaxResults, long InRequiredRootHandle, List<AutomationElement> InOutResults, ref int InOutSkippedOtherWindows, CancellationToken InToken)
+            int InMaxResults, long InRequiredRootHandle, TreeWalker InWalker, int InMaxVisited, List<AutomationElement> InOutResults,
+            ref int InOutSkippedOtherWindows, ref int InOutVisitedCount, CancellationToken InToken)
         {
-            if (InToken.IsCancellationRequested || InOutResults.Count >= InMaxResults)
+            if (InToken.IsCancellationRequested || InOutResults.Count >= InMaxResults || InOutVisitedCount >= InMaxVisited)
             {
                 return;
             }
+            InOutVisitedCount++;
 
             if (UiTools.MatchesCriteria(InRoot, InCriteria))
             {
@@ -275,15 +289,16 @@ namespace VsMcp.Extension.Tools
 
             try
             {
-                AutomationElement TheChild = TreeWalker.ControlViewWalker.GetFirstChild(InRoot);
+                AutomationElement TheChild = InWalker.GetFirstChild(InRoot);
                 while (TheChild != null)
                 {
-                    if (InToken.IsCancellationRequested || InOutResults.Count >= InMaxResults)
+                    if (InToken.IsCancellationRequested || InOutResults.Count >= InMaxResults || InOutVisitedCount >= InMaxVisited)
                     {
                         return;
                     }
-                    CollectMatches(TheChild, InCriteria, InIsOffscreenIncluded, InMaxResults, InRequiredRootHandle, InOutResults, ref InOutSkippedOtherWindows, InToken);
-                    TheChild = TreeWalker.ControlViewWalker.GetNextSibling(TheChild);
+                    CollectMatches(TheChild, InCriteria, InIsOffscreenIncluded, InMaxResults, InRequiredRootHandle, InWalker, InMaxVisited,
+                        InOutResults, ref InOutSkippedOtherWindows, ref InOutVisitedCount, InToken);
+                    TheChild = InWalker.GetNextSibling(TheChild);
                 }
             }
             catch
@@ -423,8 +438,17 @@ namespace VsMcp.Extension.Tools
             int TheLimit = InSelector.Index.HasValue ? _MAX_INDEXED_CANDIDATES : _MAX_AMBIGUOUS_CANDIDATES + 1;
             List<AutomationElement> TheMatches = new List<AutomationElement>();
             int TheSkippedOtherWindows = 0;
-            CollectMatches(TheRoot, ToCriteria(InSelector), true, TheLimit, InWindow.ToInt64(), TheMatches, ref TheSkippedOtherWindows, CancellationToken.None);
+            int TheVisitedCount = 0;
+            CollectMatches(TheRoot, ToCriteria(InSelector), true, TheLimit, InWindow.ToInt64(), TreeWalker.ControlViewWalker, _MAX_VISITED_ELEMENTS,
+                TheMatches, ref TheSkippedOtherWindows, ref TheVisitedCount, CancellationToken.None);
 
+            if (TheVisitedCount >= _MAX_VISITED_ELEMENTS)
+            {
+                // Extended (Phase 9): 走査が内部上限で打ち切られた時点の候補は「全候補」ではないので、一意性を主張せずに拒否する
+                OutFailure = UiWindowResolveFailure.SearchAborted;
+                return $"Element search in window {InWindow.ToInt64()} was aborted after {_MAX_VISITED_ELEMENTS} elements; narrow the selector " +
+                    $"(criteria: {InSelector.Describe()})";
+            }
             if (TheMatches.Count == 0)
             {
                 OutFailure = UiWindowResolveFailure.NotFound;

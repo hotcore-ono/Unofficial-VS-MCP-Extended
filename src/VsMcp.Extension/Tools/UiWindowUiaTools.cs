@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -23,6 +24,18 @@ namespace VsMcp.Extension.Tools
     /// </summary>
     public static class UiWindowUiaTools
     {
+        /// <summary>Extended (Phase 9): ui_window_find_elements の view: コントロールビュー（既定。upstream ui_find_elements と同じ）。</summary>
+        private const string _VIEW_CONTROL = "control";
+
+        /// <summary>Extended (Phase 9): ui_window_find_elements の view: RawView（IsControlElement=false の要素も走査する）。</summary>
+        private const string _VIEW_RAW = "raw";
+
+        /// <summary>Extended (Phase 9): ui_window_find_elements の maxVisited の既定値。</summary>
+        private const int _DEFAULT_MAX_VISITED = 10000;
+
+        /// <summary>Extended (Phase 9): ui_window_find_elements の maxVisited の上限。</summary>
+        private const int _MAX_MAX_VISITED = 100000;
+
         /// <summary>ツールをレジストリへ登録する。VsMcpPackage.RegisterTools から呼ばれる。</summary>
         /// <param name="InRegistry">登録先レジストリ。</param>
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
@@ -101,7 +114,11 @@ namespace VsMcp.Extension.Tools
                     "It works for modal dialogs, MessageBox / TaskDialog / file dialogs and owned windows. Same match modes as ui_find_elements ('exact' default, 'contains', " +
                     "'regex'). Each result carries nativeWindowHandle, isOffscreen, rootWindowHandle and the supported patterns (invoke, value, selectionItem, toggle, " +
                     "expandCollapse, scroll) so it can be passed straight to ui_window_click / double_click / right_click / drag / mouse_wheel. For the buttons of a MessageBox / " +
-                    "TaskDialog / file dialog prefer standard_dialog_execute / standard_file_dialog_* over generic clicks. The handle is validated first.",
+                    "TaskDialog / file dialog prefer standard_dialog_execute / standard_file_dialog_* over generic clicks. The handle is validated first. " +
+                    "The walk is bounded by 'maxVisited' (default 10000) in addition to the 30 second timeout, and 'view' selects the UI Automation tree view: " +
+                    "'control' (default, the same elements as ui_find_elements) or 'raw', which also returns elements with IsControlElement=false (for example the " +
+                    "'TaskDialog' Pane of a TaskDialog) but never leaves the given window. The response adds 'visitedCount', 'elapsedMs', 'truncated' (the walk was " +
+                    "stopped by maxVisited or by the timeout, so the result may be incomplete) and 'view'; all existing fields are unchanged.",
                     SchemaBuilder.Create()
                         .AddInteger("windowHandle", "HWND of the window whose descendants are searched (decimal)", required: true)
                         .AddString("name", "Name of the UI element to find")
@@ -115,6 +132,9 @@ namespace VsMcp.Extension.Tools
                         .AddString("ancestorAutomationId", "Limit the search to descendants of the element(s) with this AutomationId inside the window")
                         .AddBoolean("includeOffscreen", "Include elements marked IsOffscreen (default: false)")
                         .AddInteger("maxResults", "Maximum number of elements to return (default: 50, max: 1000)")
+                        .AddInteger("maxVisited", "Maximum number of UI Automation elements to visit before stopping the walk (default: 10000, 1-100000)")
+                        .AddEnum("view", "UI Automation tree view to walk: 'control' (default) or 'raw' (also returns elements with IsControlElement=false)",
+                            new[] { _VIEW_CONTROL, _VIEW_RAW })
                         .Build()),
                 InArgs => UiWindowFindElementsAsync(InAccessor, InArgs));
         }
@@ -261,10 +281,12 @@ namespace VsMcp.Extension.Tools
         /// ui_window_find_elements の本体。検索条件の解釈は upstream ui_find_elements と同じ（match モード、hasPattern の検証、maxResults の丸め）で、
         /// 検索 root だけを AutomationElement.FromHandle(検証済み HWND) にする。走査中に見つかった別ウィンドウ所属の要素は結果から除外し件数だけ返す。
         /// タイムアウト時は部分結果を返す。
+        /// Extended (Phase 9): 走査ビュー（control / raw）と訪問数の上限（maxVisited）を選べるようにし、走査量を戻り値へ載せる。
+        /// RawView でも root は検証済み HWND のままなので、デスクトップ全体を走査することはない。
         /// </summary>
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         /// <param name="InArgs">ツール引数。</param>
-        /// <returns>text（windowHandle / count / elements / skippedOtherWindows / timedOut / maxResults）、またはエラー。</returns>
+        /// <returns>text（windowHandle / count / elements / skippedOtherWindows / timedOut / maxResults / visitedCount / elapsedMs / truncated / view）、またはエラー。</returns>
         private static async Task<McpToolResult> UiWindowFindElementsAsync(VsServiceAccessor InAccessor, JObject InArgs)
         {
             string TheName = InArgs.Value<string>("name");
@@ -283,6 +305,23 @@ namespace VsMcp.Extension.Tools
             {
                 TheMaxResults = 1000;
             }
+
+            // Extended (Phase 9): 走査の内部上限とツリービュー（既定は従来と同じ control / 10000 要素）
+            int TheMaxVisited = InArgs.Value<int?>("maxVisited") ?? _DEFAULT_MAX_VISITED;
+            if (TheMaxVisited < 1)
+            {
+                TheMaxVisited = 1;
+            }
+            if (TheMaxVisited > _MAX_MAX_VISITED)
+            {
+                TheMaxVisited = _MAX_MAX_VISITED;
+            }
+            string TheView = InArgs.Value<string>("view") ?? _VIEW_CONTROL;
+            if (!string.Equals(TheView, _VIEW_CONTROL, StringComparison.Ordinal) && !string.Equals(TheView, _VIEW_RAW, StringComparison.Ordinal))
+            {
+                return McpToolResult.Error($"Unknown view: '{TheView}'. Expected one of: {_VIEW_CONTROL}, {_VIEW_RAW}");
+            }
+            TreeWalker TheWalker = string.Equals(TheView, _VIEW_RAW, StringComparison.Ordinal) ? TreeWalker.RawViewWalker : TreeWalker.ControlViewWalker;
 
             if (string.IsNullOrEmpty(TheName) && string.IsNullOrEmpty(TheAutomationId)
                 && string.IsNullOrEmpty(TheClassName) && string.IsNullOrEmpty(TheControlTypeName)
@@ -355,7 +394,11 @@ namespace VsMcp.Extension.Tools
             List<Dictionary<string, object>> TheResults = new List<Dictionary<string, object>>();
             object TheResultsLock = new object();
             int TheSkippedOtherWindows = 0;
+            // Extended (Phase 9): 走査中のカウンタは 1 要素の配列で共有する（CollectMatches が要素ごとに直接書き込むため、
+            // タイムアウトで打ち切ったときのスナップショットでも「そこまでに訪問した数」が読める）
+            int[] TheVisitedCounter = new int[1];
             long TheRequiredRootHandle = TheWindow.ToInt64();
+            Stopwatch TheStopwatch = Stopwatch.StartNew();
 
             using (CancellationTokenSource TheCancellation = new CancellationTokenSource())
             {
@@ -391,12 +434,12 @@ namespace VsMcp.Extension.Tools
                     int TheSkippedInWalk = 0;
                     foreach (AutomationElement TheSearchRoot in TheRoots)
                     {
-                        if (TheCancellation.Token.IsCancellationRequested || TheMatches.Count >= TheMaxResults)
+                        if (TheCancellation.Token.IsCancellationRequested || TheMatches.Count >= TheMaxResults || TheVisitedCounter[0] >= TheMaxVisited)
                         {
                             break;
                         }
                         UiWindowElementResolver.CollectMatches(TheSearchRoot, TheCriteria, TheIsOffscreenIncluded, TheMaxResults, TheRequiredRootHandle,
-                            TheMatches, ref TheSkippedInWalk, TheCancellation.Token);
+                            TheWalker, TheMaxVisited, TheMatches, ref TheSkippedInWalk, ref TheVisitedCounter[0], TheCancellation.Token);
 
                         // 集めた分だけ順次情報化する（タイムアウト時に部分結果を返すため）
                         lock (TheResultsLock)
@@ -444,10 +487,13 @@ namespace VsMcp.Extension.Tools
 
                 List<Dictionary<string, object>> TheSnapshot;
                 int TheSkippedSnapshot;
+                int TheVisitedSnapshot;
                 lock (TheResultsLock)
                 {
                     TheSnapshot = new List<Dictionary<string, object>>(TheResults);
                     TheSkippedSnapshot = TheSkippedOtherWindows;
+                    // 走査スレッドが直接書き込んでいる共有カウンタを読む（打ち切り時も現在値になる）
+                    TheVisitedSnapshot = Volatile.Read(ref TheVisitedCounter[0]);
                 }
 
                 if (IsTimedOut && TheSnapshot.Count == 0)
@@ -464,6 +510,11 @@ namespace VsMcp.Extension.Tools
                     skippedOtherWindows = TheSkippedSnapshot,
                     timedOut = IsTimedOut,
                     maxResults = TheMaxResults,
+                    // Extended (Phase 9): 走査量の実測値と打ち切りの有無（既存キーは変更しない）
+                    visitedCount = TheVisitedSnapshot,
+                    elapsedMs = TheStopwatch.ElapsedMilliseconds,
+                    truncated = IsTimedOut || TheVisitedSnapshot >= TheMaxVisited,
+                    view = TheView,
                 });
             }
         }
