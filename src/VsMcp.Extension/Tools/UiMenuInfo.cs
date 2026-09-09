@@ -49,6 +49,13 @@ namespace VsMcp.Extension.Tools
         [JsonProperty("rootWindowHandle")]
         public long RootWindowHandle { get; set; }
 
+        /// <summary>
+        /// Extended (Phase 9): Win32 メニュー（HMENU）上の 0 始まりの位置。GetMenuItemRect で項目の矩形を引くために使う。
+        /// HMENU を持たないメニュー（WPF）や、UIA の項目と Win32 の項目を対応付けられなかった場合は null（推測しない）。
+        /// </summary>
+        [JsonProperty("win32Position")]
+        public int? Win32Position { get; set; }
+
         /// <summary>対応する UIA パターン名（invoke / expandCollapse / toggle など）。</summary>
         [JsonProperty("patterns")]
         public List<string> Patterns { get; set; } = new List<string>();
@@ -110,6 +117,14 @@ namespace VsMcp.Extension.Tools
         /// <summary>メニュー項目の一覧（表示順）。</summary>
         [JsonProperty("items")]
         public List<UiMenuItemInfo> Items { get; set; } = new List<UiMenuItemInfo>();
+
+        /// <summary>
+        /// Extended (Phase 9c): items を取り出した部分木。"self" はメニューウィンドウ自身の UIA 部分木（既定）、
+        /// "ownerSubtree" は Owner（親メニュー）の部分木から候補ウィンドウの矩形で絞り込んで取り出したことを表す。
+        /// 後者は WPF が 2 回目以降のサブメニューへ再利用した popup の UIA ルートが項目を 1 件も公開しない場合に起きる。
+        /// </summary>
+        [JsonProperty("itemsSource")]
+        public string ItemsSource { get; set; } = UiPopupMenuResolver.ItemsSourceSelf;
 
         /// <summary>UIA ルート要素の Name。取得できない場合は null。</summary>
         [JsonProperty("uiaRootName")]
