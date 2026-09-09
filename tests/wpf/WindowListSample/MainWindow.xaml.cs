@@ -77,5 +77,97 @@ namespace WindowListSample
             };
             TheTimer.Start();
         }
+
+        /// <summary>WPF の MessageBox.Show（内部は Win32 MessageBox）を Owner 付きで表示し、結果を画面に出す。</summary>
+        /// <param name="InCaption">タイトル。</param>
+        /// <param name="InButton">ボタン構成。</param>
+        /// <param name="InDefault">既定ボタン。</param>
+        private void ShowMessageBox(string InCaption, MessageBoxButton InButton, MessageBoxResult InDefault)
+        {
+            MessageBoxResult TheResult = MessageBox.Show(this, "標準ダイアログ検証用のメッセージ本文です。", InCaption, InButton, MessageBoxImage.Question, InDefault);
+            LastDialogResultText.Text = $"最後の結果: MessageBox {InButton} -> {TheResult}";
+        }
+
+        /// <summary>MessageBox OK。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowMessageBoxOkClick(object InSender, RoutedEventArgs InArgs)
+        {
+            ShowMessageBox("確認 (OK)", MessageBoxButton.OK, MessageBoxResult.None);
+        }
+
+        /// <summary>MessageBox OKCancel。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowMessageBoxOkCancelClick(object InSender, RoutedEventArgs InArgs)
+        {
+            ShowMessageBox("確認 (OKCancel)", MessageBoxButton.OKCancel, MessageBoxResult.None);
+        }
+
+        /// <summary>MessageBox YesNo。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowMessageBoxYesNoClick(object InSender, RoutedEventArgs InArgs)
+        {
+            ShowMessageBox("確認 (YesNo)", MessageBoxButton.YesNo, MessageBoxResult.None);
+        }
+
+        /// <summary>MessageBox YesNoCancel。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowMessageBoxYesNoCancelClick(object InSender, RoutedEventArgs InArgs)
+        {
+            ShowMessageBox("確認 (YesNoCancel)", MessageBoxButton.YesNoCancel, MessageBoxResult.None);
+        }
+
+        /// <summary>MessageBox YesNoCancel、既定ボタン No（MB_DEFBUTTON2 相当）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowMessageBoxYesNoCancelDefaultNoClick(object InSender, RoutedEventArgs InArgs)
+        {
+            ShowMessageBox("確認 (YesNoCancel 既定 No)", MessageBoxButton.YesNoCancel, MessageBoxResult.No);
+        }
+
+        /// <summary>MessageBox RetryCancel（WPF の MessageBoxButton には無いため Win32 MessageBoxW を直接呼ぶ）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowMessageBoxRetryCancelClick(object InSender, RoutedEventArgs InArgs)
+        {
+            IntPtr TheOwner = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            int TheResult = TaskDialogInterop.ShowMessageBoxRetryCancel(TheOwner, "標準ダイアログ検証用のメッセージ本文です。", "確認 (RetryCancel)");
+            LastDialogResultText.Text = $"最後の結果: MessageBox RetryCancel -> {TheResult}";
+        }
+
+        /// <summary>TaskDialog OK / Cancel（標準ボタン）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowTaskDialogOkCancelClick(object InSender, RoutedEventArgs InArgs)
+        {
+            IntPtr TheOwner = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            int TheResult = TaskDialogInterop.ShowStandard(TheOwner, "TaskDialog (OKCancel)", "メインインストラクション", "本文コンテンツ",
+                TaskDialogInterop.TDCBF_OK_BUTTON | TaskDialogInterop.TDCBF_CANCEL_BUTTON);
+            LastDialogResultText.Text = $"最後の結果: TaskDialog OKCancel -> {TheResult}";
+        }
+
+        /// <summary>TaskDialog Yes / No（標準ボタン）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowTaskDialogYesNoClick(object InSender, RoutedEventArgs InArgs)
+        {
+            IntPtr TheOwner = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            int TheResult = TaskDialogInterop.ShowStandard(TheOwner, "TaskDialog (YesNo)", "メインインストラクション", "本文コンテンツ",
+                TaskDialogInterop.TDCBF_YES_BUTTON | TaskDialogInterop.TDCBF_NO_BUTTON);
+            LastDialogResultText.Text = $"最後の結果: TaskDialog YesNo -> {TheResult}";
+        }
+
+        /// <summary>TaskDialog Custom（TaskDialogIndirect: カスタムボタン ID / ラジオ / 検証チェック / フッター）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowTaskDialogCustomClick(object InSender, RoutedEventArgs InArgs)
+        {
+            IntPtr TheOwner = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            int TheResult = TaskDialogInterop.ShowCustom(TheOwner);
+            LastDialogResultText.Text = $"最後の結果: TaskDialog Custom -> {TheResult}";
+        }
     }
 }
