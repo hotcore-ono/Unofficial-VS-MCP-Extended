@@ -166,6 +166,7 @@ namespace VsMcp.Extension
             UiWindowActionTools.Register(_toolRegistry, _serviceAccessor); // Extended: modal-safe click / double / right / drag / wheel for any debuggee window
             UiWindowIdleTools.Register(_toolRegistry, _serviceAccessor); // Extended: wait idle for any debuggee window set
             UiMenuTools.Register(_toolRegistry, _serviceAccessor); // Extended: popup / context menu detection, selection, capture and waiting
+            UiWindowKeyboardTools.Register(_toolRegistry, _serviceAccessor); // Extended: window-aware key input for any debuggee window
             WatchTools.Register(_toolRegistry, _serviceAccessor);
             ThreadTools.Register(_toolRegistry, _serviceAccessor);
             ProcessTools.Register(_toolRegistry, _serviceAccessor);

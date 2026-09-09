@@ -360,4 +360,60 @@ internal static extern uint MapVirtualKey(uint uCode, uint uMapType);
     // GetWindowLongW の nIndex と拡張スタイル
     internal const int GWL_EXSTYLE = -20;
     internal const int WS_EX_TOOLWINDOW = 0x00000080;
+
+    // ------------------------------------------------------------------
+    // Extended additions (Phase 9): メニュー項目に UIA 要素が無いときの物理クリック fallback（GetMenuItemRect）と、
+    // ui_menu_close の outside click 候補点（Owner のタイトルバー中央）を求める GetSystemMetrics。
+    // 座標系（WindowFromPoint / GetAncestor / GetWindowRect / GetDpiForWindow）と VK_* / KEYBDINPUT は
+    // 既存宣言をそのまま再利用し、ここでは重複宣言しない。
+    // ------------------------------------------------------------------
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetMenuItemRect(IntPtr hWnd, IntPtr hMenu, uint uItem, out RECT lprcItem);
+    [DllImport("user32.dll")]
+    internal static extern int GetSystemMetrics(int nIndex);
+
+    // GetSystemMetrics の nIndex: タイトルバーの高さ（システム DPI 基準の px）
+    internal const int SM_CYCAPTION = 4;
+
+    // ------------------------------------------------------------------
+    // Extended additions (Phase 9): キー注入用の「Win32 と同じレイアウトの INPUT」。
+    // 上の upstream 由来 INPUT は union が KEYBDINPUT だけなので x64 では 32 バイトにしかならず、
+    // Win32 が要求する 40 バイト（MOUSEINPUT を含む union）と一致しない。そのため
+    // SendInput(n, inputs, Marshal.SizeOf(typeof(INPUT))) は 0 を返し（GetLastError=87 ERROR_INVALID_PARAMETER）、
+    // 1 イベントも注入されない（2026-09-09 実測。upstream ui_send_keys は x64 で無効）。
+    // upstream の INPUT / SendInput 宣言と UiTools はこのフェーズでは変更せず、Extended 側で正しい型を用意する。
+    // ------------------------------------------------------------------
+
+    /// <summary>SendInput の INPUT が持つマウス入力。union のサイズを Win32 と一致させるために必要（キー注入では使わない）。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    /// <summary>SendInput の INPUT が持つ union（最大メンバーは MOUSEINPUT）。</summary>
+    [StructLayout(LayoutKind.Explicit)]
+    internal struct INPUTUNION_EX
+    {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+
+    /// <summary>SendInput へ渡す入力イベント（x64 で 40 バイト＝Win32 の INPUT と同じレイアウト）。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct INPUT_EX
+    {
+        public int type;
+        public INPUTUNION_EX union;
+    }
+
+    [DllImport("user32.dll", SetLastError = true, EntryPoint = "SendInput")]
+    internal static extern uint SendInputEx(uint nInputs, INPUT_EX[] pInputs, int cbSize);
 }
