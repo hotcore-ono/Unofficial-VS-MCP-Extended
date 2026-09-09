@@ -154,6 +154,8 @@ namespace VsMcp.Extension.Tools
             { "ui_menu_capture", "UI" }, // Extended
             { "ui_menu_wait", "UI" }, // Extended
             { "ui_menu_wait_closed", "UI" }, // Extended
+            { "ui_menu_close", "UI" }, // Extended
+            { "ui_menu_select_path", "UI" }, // Extended
             { "ui_window_send_keys", "UI" }, // Extended
             // Console
             { "console_read", "Console" },
