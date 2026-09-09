@@ -23,11 +23,29 @@
 | ドラッグ | `DragSource` → `DragTarget` | `DragResultText` | 矩形内で離すと `Drag: dropped on target (N)`、矩形外なら `Drag: released outside target` |
 | スクロール | `ScrollableArea`（`ScrollItem01`〜`ScrollItem40`） | `ScrollOffsetText` | `Scroll: VerticalOffset=N` |
 | 待機（進行中→完了） | `BusyStartButton`（300ms × 5 回） | `BusyStatusText` | `Busy: running k/5` → `Busy: done`（初期 `Busy: idle`） |
+| コンテキストメニュー サブメニュー | `RightClickTestArea` → `ContextMenuSubmenu` → `ContextMenuSubItem1` / `ContextMenuSubItem2` | `ContextMenuCountText` | `ContextMenu: opened N, selected Sub Item 1`（または `Sub Item 2`） |
+| コンテキストメニュー 無効項目 | `RightClickTestArea` → `ContextMenuDisabledItem`（`IsEnabled=False`） | `ContextMenuCountText` | 変化しないこと（誤って起動された場合だけ `ContextMenu: opened N, selected Disabled Item` になる） |
+| Win32 ポップアップメニュー（右クリック） | `Win32MenuTestArea` | `Win32MenuResultText` | カーソル位置に `#32768` が開き、選択後 `Win32Menu: selected 1001`（キャンセルは `Win32Menu: cancelled`、初期 `Win32Menu: (none)`） |
+| Win32 ポップアップメニュー（ボタン） | `ShowWin32MenuButton` | `Win32MenuResultText` | ボタン直下に同じ `#32768` が開く（右クリック不要の経路）。結果表示は上と同じ |
+
+Win32 ポップアップメニュー（`Win32MenuInterop.ShowPopupMenu`）の項目とコマンド ID:
+
+| 項目 | コマンド ID | 備考 |
+|---|---|---|
+| `Win32 Item A` | 1001 | MF_STRING |
+| `Win32 Item B` | 1002 | MF_STRING |
+| `Submenu` | （なし） | MF_POPUP のためコマンド ID を持たない |
+| `Submenu` → `Sub Item 1` | 1101 | MF_STRING |
+| `Submenu` → `Sub Item 2` | 1102 | MF_STRING |
+| `Disabled Item` | 1201 | MF_GRAYED（選択できない） |
 
 補足:
 
 - ドラッグは OLE の `DoDragDrop` ではなく `Mouse.Capture` による手動追跡で判定する（`DragSource` の `PreviewMouseLeftButtonUp` の座標が `DragTarget` の矩形内かどうか）。
 - Busy の追加項目は `BusyItemsPanel`（`StackPanel`）の子として `Busy item k` という `TextBlock` で積まれる。WPF の `Panel` は AutomationPeer を持たないため `BusyItemsPanel` 自体は UIA ツリーに現れない。進捗の確認は `BusyStatusText` か `Busy item k` という Name の Text 要素で行う。
+- Win32 ポップアップメニューは `CreatePopupMenu` + `TrackPopupMenuEx(TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN)` で表示する。WPF の `ContextMenu`（`HwndWrapper[...]` 内の Popup）と違い、ClassName `#32768` の独立したトップレベルウィンドウとして現れる。
+- `TrackPopupMenuEx` はメニューが閉じるまで UI スレッドでモーダルループを回す。そのため `Win32MenuResultText` の更新はメニューが閉じた後になる（表示中は WPF のイベントハンドラーから戻らない）。
+- メニューの表示座標はスクリーン物理 px で指定する。`Visual.PointToScreen` は内部で `CompositionTarget.TransformToDevice` を適用済みのため、コード側で DPI 換算を重ねていない（DPI 125% の実機で、ボタン直下・カーソル位置に開くことを確認済み。fixture 作成時に単体起動 + UIA クライアントで確認。Exp 経由の検証は verify8）。
 
 ## 使い方（Experimental Instance での検証手順）
 
