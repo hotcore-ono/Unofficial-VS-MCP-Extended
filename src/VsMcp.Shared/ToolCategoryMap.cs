@@ -136,6 +136,9 @@ namespace VsMcp.Shared
             { "standard_file_dialog_cancel", "UI" }, // Extended
             { "standard_file_dialog_wait", "UI" }, // Extended
             { "standard_file_dialog_wait_closed", "UI" }, // Extended
+            { "ui_window_get_tree", "UI" }, // Extended
+            { "ui_window_snapshot", "UI" }, // Extended
+            { "ui_window_capture_region", "UI" }, // Extended
             // Console
             { "console_read", "Console" },
             { "console_send", "Console" },

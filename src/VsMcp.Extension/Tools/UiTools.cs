@@ -384,6 +384,12 @@ namespace VsMcp.Extension.Tools
             if (hwnd == IntPtr.Zero)
                 return McpToolResult.Error("No debugged process found or it has no visible window. Make sure debugging is active.");
 
+            return await CaptureRegionFromWindowAsync(hwnd, x, y, width, height);
+        }
+
+        // Extended: shared by ui_capture_region (main window) and ui_window_capture_region (any debuggee HWND).
+        internal static async Task<McpToolResult> CaptureRegionFromWindowAsync(IntPtr hwnd, int x, int y, int width, int height)
+        {
             var fullBitmap = await CaptureWindowBitmapAsync(hwnd);
             if (fullBitmap == null)
                 return McpToolResult.Error("Failed to capture window");
@@ -592,6 +598,12 @@ namespace VsMcp.Extension.Tools
             if (hwnd == IntPtr.Zero)
                 return McpToolResult.Error("No debugged process found or it has no visible window. Make sure debugging is active.");
 
+            return await BuildTreeFromWindowAsync(hwnd, maxDepth, maxChildren, maxElements);
+        }
+
+        // Extended: shared by ui_get_tree (main window) and ui_window_get_tree (any debuggee HWND).
+        internal static async Task<McpToolResult> BuildTreeFromWindowAsync(IntPtr hwnd, int maxDepth, int maxChildren, int maxElements)
+        {
             try
             {
                 int elementCount = 0;
@@ -624,6 +636,13 @@ namespace VsMcp.Extension.Tools
             if (hwnd == IntPtr.Zero)
                 return McpToolResult.Error("No debugged process found or it has no visible window. Make sure debugging is active.");
 
+            return await BuildSnapshotFromWindowAsync(hwnd, depth, maxElements, includeScreenshot, includeOffscreen, ancestorAutomationId);
+        }
+
+        // Extended: shared by ui_snapshot (main window) and ui_window_snapshot (any debuggee HWND).
+        internal static async Task<McpToolResult> BuildSnapshotFromWindowAsync(IntPtr hwnd, int depth, int maxElements,
+            bool includeScreenshot, bool includeOffscreen, string ancestorAutomationId)
+        {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
             Dictionary<string, object> payload;
