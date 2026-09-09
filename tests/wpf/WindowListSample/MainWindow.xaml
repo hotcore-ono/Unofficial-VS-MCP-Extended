@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:WindowListSample"
         Title="WindowListSample Main"
-        Width="900" Height="640"
+        Width="1240" Height="720"
         WindowStartupLocation="CenterScreen">
     <StackPanel Orientation="Horizontal" Margin="24" VerticalAlignment="Center" HorizontalAlignment="Center">
     <StackPanel Margin="0,0,24,0" VerticalAlignment="Top">
@@ -50,6 +50,43 @@
         <Button AutomationProperties.AutomationId="ShowSaveFileDialogButton" Content="SaveFileDialog（fixture フォルダー）" Width="280" Height="30" Margin="0,0,0,8" Click="OnShowSaveFileDialogClick" />
         <Button AutomationProperties.AutomationId="ShowOpenFolderDialogButton" Content="OpenFolderDialog（fixture フォルダー）" Width="280" Height="30" Click="OnShowOpenFolderDialogClick" />
         <TextBlock x:Name="LastDialogResultText" Text="最後の結果: (なし)" Margin="0,12,0,0" AutomationProperties.AutomationId="LastDialogResultText" />
+    </StackPanel>
+    <StackPanel VerticalAlignment="Top" Margin="24,0,0,0">
+        <TextBlock Text="ui_window_* 検証用" FontSize="18" Margin="0,0,0,16" />
+        <Button AutomationProperties.AutomationId="ClickTestButton" Content="Click Test" Width="280" Height="30" Click="OnClickTestClick" />
+        <TextBlock x:Name="ClickCountText" AutomationProperties.AutomationId="ClickCountText" Text="Click: 0" Width="280" Margin="0,4,0,10" />
+        <Label AutomationProperties.AutomationId="DoubleClickTestArea" Content="Double Click Area" Width="280" Height="40" Background="LightBlue"
+               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+               PreviewMouseLeftButtonDown="OnDoubleClickAreaPreviewMouseLeftButtonDown"
+               MouseDoubleClick="OnDoubleClickAreaMouseDoubleClick" />
+        <TextBlock x:Name="DoubleClickCountText" AutomationProperties.AutomationId="DoubleClickCountText" Text="DoubleClick: 0 / SingleClick: 0" Width="280" Margin="0,4,0,10" />
+        <Label AutomationProperties.AutomationId="RightClickTestArea" Content="Right Click Area" Width="280" Height="40" Background="LightGreen"
+               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+               ContextMenuOpening="OnRightClickAreaContextMenuOpening">
+            <Label.ContextMenu>
+                <ContextMenu>
+                    <MenuItem AutomationProperties.AutomationId="ContextMenuItemA" Header="Context Item A" Click="OnContextMenuItemAClick" />
+                    <MenuItem AutomationProperties.AutomationId="ContextMenuItemB" Header="Context Item B" Click="OnContextMenuItemBClick" />
+                </ContextMenu>
+            </Label.ContextMenu>
+        </Label>
+        <TextBlock x:Name="ContextMenuCountText" AutomationProperties.AutomationId="ContextMenuCountText" Text="ContextMenu: opened 0" Width="280" Margin="0,4,0,10" />
+        <StackPanel Orientation="Horizontal" Width="280">
+            <Label x:Name="DragSource" AutomationProperties.AutomationId="DragSource" Content="Drag Source" Width="130" Height="40" Background="Khaki"
+                   HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                   PreviewMouseLeftButtonDown="OnDragSourcePreviewMouseLeftButtonDown"
+                   PreviewMouseLeftButtonUp="OnDragSourcePreviewMouseLeftButtonUp" />
+            <Label x:Name="DragTarget" AutomationProperties.AutomationId="DragTarget" Content="Drag Target" Width="130" Height="40" Margin="20,0,0,0" Background="LightSalmon"
+                   HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+        </StackPanel>
+        <TextBlock x:Name="DragResultText" AutomationProperties.AutomationId="DragResultText" Text="Drag: (none)" Width="280" Margin="0,4,0,10" />
+        <ScrollViewer AutomationProperties.AutomationId="ScrollableArea" Width="280" Height="120" VerticalScrollBarVisibility="Auto" ScrollChanged="OnScrollableAreaScrollChanged">
+            <StackPanel x:Name="ScrollItemsPanel" />
+        </ScrollViewer>
+        <TextBlock x:Name="ScrollOffsetText" AutomationProperties.AutomationId="ScrollOffsetText" Text="Scroll: VerticalOffset=0" Width="280" Margin="0,4,0,10" />
+        <Button AutomationProperties.AutomationId="BusyStartButton" Content="Busy (5 x 300ms)" Width="280" Height="30" Click="OnBusyStartClick" />
+        <TextBlock x:Name="BusyStatusText" AutomationProperties.AutomationId="BusyStatusText" Text="Busy: idle" Width="280" Margin="0,4,0,4" />
+        <StackPanel x:Name="BusyItemsPanel" AutomationProperties.AutomationId="BusyItemsPanel" Width="280" />
     </StackPanel>
     </StackPanel>
 </Window>

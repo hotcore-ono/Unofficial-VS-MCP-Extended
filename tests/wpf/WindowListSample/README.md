@@ -13,6 +13,22 @@
 
 ボタンには `AutomationProperties.AutomationId` を付けてあり、`ui_click` の `automationId` で操作できる。
 
+## ui_window_* Action ツール検証用 UI（MainWindow 3 列目）
+
+| 操作 | 操作対象 AutomationId | 結果表示 AutomationId | 期待する表示 |
+|---|---|---|---|
+| クリック | `ClickTestButton` | `ClickCountText` | `Click: N`（初期 `Click: 0`） |
+| ダブルクリック | `DoubleClickTestArea` | `DoubleClickCountText` | `DoubleClick: N / SingleClick: M`（ダブルクリック 1 回で N=1, M=1） |
+| 右クリック | `RightClickTestArea` → `ContextMenuItemA` / `ContextMenuItemB` | `ContextMenuCountText` | `ContextMenu: opened N` → 選択後 `ContextMenu: opened N, selected A`（または B） |
+| ドラッグ | `DragSource` → `DragTarget` | `DragResultText` | 矩形内で離すと `Drag: dropped on target (N)`、矩形外なら `Drag: released outside target` |
+| スクロール | `ScrollableArea`（`ScrollItem01`〜`ScrollItem40`） | `ScrollOffsetText` | `Scroll: VerticalOffset=N` |
+| 待機（進行中→完了） | `BusyStartButton`（300ms × 5 回） | `BusyStatusText` | `Busy: running k/5` → `Busy: done`（初期 `Busy: idle`） |
+
+補足:
+
+- ドラッグは OLE の `DoDragDrop` ではなく `Mouse.Capture` による手動追跡で判定する（`DragSource` の `PreviewMouseLeftButtonUp` の座標が `DragTarget` の矩形内かどうか）。
+- Busy の追加項目は `BusyItemsPanel`（`StackPanel`）の子として `Busy item k` という `TextBlock` で積まれる。WPF の `Panel` は AutomationPeer を持たないため `BusyItemsPanel` 自体は UIA ツリーに現れない。進捗の確認は `BusyStatusText` か `Busy item k` という Name の Text 要素で行う。
+
 ## 使い方（Experimental Instance での検証手順）
 
 ```text
