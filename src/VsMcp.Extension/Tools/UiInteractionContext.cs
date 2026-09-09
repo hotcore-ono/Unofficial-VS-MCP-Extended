@@ -79,6 +79,77 @@ namespace VsMcp.Extension.Tools
         }
 
         /// <summary>
+        /// Extended (Phase 9): 標準ダイアログ（MessageBox / TaskDialog / File Dialog）用の Context 生成。
+        /// 安全境界は <see cref="TryCreate"/> とまったく同じ（IsWindow → PID 再照合 → 再列挙 → モーダル判定）で、
+        /// ダイアログ自身はモーダル候補（IsWindowModalCandidate）であっても interactable として通る。
+        /// EvaluateModalState は「他のモーダルによって塞がれているか」を対象自身の IsEnabled / IsVisible だけで判定するため、
+        /// 可視かつ有効なダイアログ自身が「モーダルで塞がれている」と判定されることはない（Phase 9 §21）。
+        /// 呼び出し側の意図（ダイアログ自身を操作する）を型で示すために別名で残している。
+        /// Win32 API だけを使い UI Automation を使わないため、任意のスレッドから呼べる。
+        /// </summary>
+        /// <param name="InWindow">正規化済みのトップレベル HWND（ダイアログ自身）。</param>
+        /// <param name="InProcessIds">デバッグ中プロセス ID の集合。</param>
+        /// <param name="OutContext">生成した Context。エラー時は null。</param>
+        /// <returns>エラーメッセージ（Phase 7 の ValidateActionTarget と同文）。正常なら null。</returns>
+        public static string TryCreateForDialog(IntPtr InWindow, HashSet<uint> InProcessIds, out UiInteractionContext OutContext)
+        {
+            return TryCreate(InWindow, InProcessIds, out OutContext);
+        }
+
+        /// <summary>
+        /// Extended (Phase 9): 操作を発行する直前に、対象ウィンドウが解決時と同じものであることを最小コストで確かめる
+        /// （IsWindow → デバッグ対象 PID → トップレベルのまま → 可視 → 有効）。分類（ダイアログ種別 / メニュー種別）の
+        /// 再判定は高価なので行わず、解決時の 1 回を正本にする。
+        /// Win32 API だけを使い UI Automation を使わないため、任意のスレッドから呼べる。
+        /// </summary>
+        /// <param name="InExpectedClassification">エラー文に載せる対象の呼び名（例: "messageBox"、"file dialog"）。空なら付けない。</param>
+        /// <returns>エラーメッセージ。操作してよければ null。</returns>
+        public string ReverifyBeforeAction(string InExpectedClassification)
+        {
+            long TheHandle = Window.ToInt64();
+            if (!IsWindow(Window))
+            {
+                return DescribeChangedWindow(TheHandle, "the window no longer exists", InExpectedClassification);
+            }
+
+            GetWindowThreadProcessId(Window, out uint TheProcessId);
+            if (ProcessIds == null || !ProcessIds.Contains(TheProcessId))
+            {
+                return DescribeChangedWindow(TheHandle, $"it no longer belongs to a debugged process (processId {TheProcessId})", InExpectedClassification);
+            }
+
+            IntPtr TheRoot = GetAncestor(Window, GA_ROOT);
+            if (TheRoot != IntPtr.Zero && TheRoot != Window)
+            {
+                return DescribeChangedWindow(TheHandle, $"it is no longer a top-level window (it now resolves to {TheRoot.ToInt64()})", InExpectedClassification);
+            }
+            if (!IsWindowVisible(Window))
+            {
+                return DescribeChangedWindow(TheHandle, "it is no longer visible", InExpectedClassification);
+            }
+            if (!IsWindowEnabled(Window))
+            {
+                return DescribeChangedWindow(TheHandle, "it is no longer enabled", InExpectedClassification);
+            }
+            return null;
+        }
+
+        /// <summary>操作直前の再検証に失敗したときのエラー文を組み立てる。</summary>
+        /// <param name="InHandle">対象のトップレベル HWND（10 進）。</param>
+        /// <param name="InDetail">変化した内容。</param>
+        /// <param name="InExpectedClassification">対象の呼び名。空なら再取得の案内を付けない。</param>
+        /// <returns>エラーメッセージ。</returns>
+        private static string DescribeChangedWindow(long InHandle, string InDetail, string InExpectedClassification)
+        {
+            string TheMessage = $"Window {InHandle} changed before the action could run ({InDetail}); nothing was done.";
+            if (string.IsNullOrEmpty(InExpectedClassification))
+            {
+                return TheMessage;
+            }
+            return TheMessage + $" Re-detect the {InExpectedClassification} and retry.";
+        }
+
+        /// <summary>
         /// 対象ウィンドウ配下で要素を一意に解決し、有効性（物理入力を伴う場合は IsOffscreen と bounds も）を確認する。
         /// Phase 7 の PrepareElementAction と同じ順序・同じ文言。STA スレッドで呼ぶこと。
         /// </summary>
