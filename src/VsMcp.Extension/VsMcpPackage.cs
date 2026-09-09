@@ -160,6 +160,7 @@ namespace VsMcp.Extension
             OutputTools.Register(_toolRegistry, _serviceAccessor);
             UiTools.Register(_toolRegistry, _serviceAccessor);
             UiWindowTools.Register(_toolRegistry, _serviceAccessor); // Extended: top-level window enumeration
+            StandardDialogTools.Register(_toolRegistry, _serviceAccessor); // Extended: standard Windows dialog automation
             WatchTools.Register(_toolRegistry, _serviceAccessor);
             ThreadTools.Register(_toolRegistry, _serviceAccessor);
             ProcessTools.Register(_toolRegistry, _serviceAccessor);

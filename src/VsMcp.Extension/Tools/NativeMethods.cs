@@ -247,4 +247,34 @@ internal static extern uint MapVirtualKey(uint uCode, uint uMapType);
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
+
+    // ------------------------------------------------------------------
+    // Extended additions (Phase 5): 標準ダイアログ（MessageBox / TaskDialog）の子コントロール構造の取得と、
+    // 標準コントロール ID による操作（StandardDialogResolver / MessageBoxAdapter / TaskDialogAdapter）。
+    // SendMessageTimeoutW は、ブレークポイントで停止中のデバッグ対象へ送っても Router のタイムアウトまで固まらないために使う。
+    // ------------------------------------------------------------------
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")]
+    internal static extern int GetDlgCtrlID(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern int GetWindowLongW(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+    internal const uint GA_PARENT = 1;
+    internal const int GWL_STYLE = -16;
+    internal const int BS_TYPEMASK = 0x0F;
+    internal const int BS_DEFPUSHBUTTON = 0x01;
+    internal const uint BM_GETCHECK = 0x00F0;
+    internal const uint BM_CLICK = 0x00F5;
+    internal const uint BST_CHECKED = 0x0001;
+    internal const uint WM_COMMAND = 0x0111;
+    internal const uint DM_GETDEFID = 0x0400;
+    internal const uint DC_HASDEFID = 0x534B;
+    internal const uint TDM_CLICK_BUTTON = 0x0400 + 102;
+    internal const uint SMTO_BLOCK = 0x0001;
+    internal const uint SMTO_ABORTIFHUNG = 0x0002;
 }

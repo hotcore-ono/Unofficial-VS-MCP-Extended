@@ -397,36 +397,7 @@ namespace VsMcp.Extension.Tools
             Stopwatch TheStopwatch = Stopwatch.StartNew();
 
             if (TheHandle.HasValue)
-            {
-                // 既に存在しない HWND は待つまでもなく closed
-                if (!NativeMethods.IsWindow(new IntPtr(TheHandle.Value)))
-                    return BuildClosedResult(true, TheStopwatch, TheHandle.Value, null, "alreadyClosed");
-
-                HashSet<uint> TheProcessIds = await GetDebuggedProcessIdsAsync(InAccessor);
-                string TheHandleError = DebuggeeWindowResolver.ValidateAndNormalizeWindowHandle(TheHandle.Value, TheProcessIds, out IntPtr TheNormalized);
-                if (TheHandleError != null)
-                    return McpToolResult.Error(TheHandleError);
-
-                // 開始時点の状態を記録し、HWND 再利用（同じ値が別プロセスのウィンドウになる）を closed と区別できるようにする
-                long TheNormalizedHandle = TheNormalized.ToInt64();
-                NativeMethods.GetWindowThreadProcessId(TheNormalized, out uint TheInitialProcessId);
-                WindowInfo TheInitialWindow = await FindWindowInfoAsync(TheProcessIds, TheNormalizedHandle);
-                string TheInitialTitle = TheInitialWindow?.Title;
-
-                while (true)
-                {
-                    if (!NativeMethods.IsWindow(TheNormalized))
-                        return BuildClosedResult(true, TheStopwatch, TheNormalizedHandle, TheInitialTitle, "windowDestroyed");
-
-                    NativeMethods.GetWindowThreadProcessId(TheNormalized, out uint TheCurrentProcessId);
-                    if (TheCurrentProcessId != TheInitialProcessId)
-                        return BuildClosedResult(true, TheStopwatch, TheNormalizedHandle, TheInitialTitle, "handleReused");
-
-                    if (TheStopwatch.ElapsedMilliseconds >= TheTimeoutMs)
-                        return BuildClosedResult(false, TheStopwatch, TheNormalizedHandle, TheInitialTitle, null);
-                    await Task.Delay(ThePollIntervalMs);
-                }
-            }
+                return await WaitForHandleClosedAsync(InAccessor, TheHandle.Value, TheTimeoutMs, ThePollIntervalMs);
 
             HashSet<uint> TheTitleProcessIds = await GetDebuggedProcessIdsAsync(InAccessor);
             if (TheTitleProcessIds.Count == 0)
@@ -450,13 +421,56 @@ namespace VsMcp.Extension.Tools
         }
 
         // ------------------------------------------------------------------
-        // 共通 helper（MCP ツールハンドラ同士は直接呼ばず、ここを共有する）
+        // 共通 helper（MCP ツールハンドラ同士は直接呼ばず、ここを共有する。StandardDialogTools からも利用するため internal）
         // ------------------------------------------------------------------
+
+        /// <summary>
+        /// 指定 HWND が閉じるまで待つ（ui_wait_for_window_closed の handle 指定と standard_dialog_wait_closed が共有）。
+        /// IsWindow の失敗（windowDestroyed）または PID の変化（handleReused = 同じ HWND 値が別プロセスに再利用された）を closed とみなす。
+        /// </summary>
+        /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
+        /// <param name="InHandle">監視する HWND（範囲検証済み）。</param>
+        /// <param name="InTimeoutMs">タイムアウト（正規化済み）。</param>
+        /// <param name="InPollIntervalMs">ポーリング間隔（正規化済み）。</param>
+        /// <returns>text（closed / elapsedMs / handle / initialTitle / reason）、またはエラー。</returns>
+        internal static async Task<McpToolResult> WaitForHandleClosedAsync(VsServiceAccessor InAccessor, long InHandle, int InTimeoutMs, int InPollIntervalMs)
+        {
+            Stopwatch TheStopwatch = Stopwatch.StartNew();
+
+            // 既に存在しない HWND は待つまでもなく closed
+            if (!NativeMethods.IsWindow(new IntPtr(InHandle)))
+                return BuildClosedResult(true, TheStopwatch, InHandle, null, "alreadyClosed");
+
+            HashSet<uint> TheProcessIds = await GetDebuggedProcessIdsAsync(InAccessor);
+            string TheHandleError = DebuggeeWindowResolver.ValidateAndNormalizeWindowHandle(InHandle, TheProcessIds, out IntPtr TheNormalized);
+            if (TheHandleError != null)
+                return McpToolResult.Error(TheHandleError);
+
+            // 開始時点の状態を記録し、HWND 再利用（同じ値が別プロセスのウィンドウになる）を closed と区別できるようにする
+            long TheNormalizedHandle = TheNormalized.ToInt64();
+            NativeMethods.GetWindowThreadProcessId(TheNormalized, out uint TheInitialProcessId);
+            WindowInfo TheInitialWindow = await FindWindowInfoAsync(TheProcessIds, TheNormalizedHandle);
+            string TheInitialTitle = TheInitialWindow?.Title;
+
+            while (true)
+            {
+                if (!NativeMethods.IsWindow(TheNormalized))
+                    return BuildClosedResult(true, TheStopwatch, TheNormalizedHandle, TheInitialTitle, "windowDestroyed");
+
+                NativeMethods.GetWindowThreadProcessId(TheNormalized, out uint TheCurrentProcessId);
+                if (TheCurrentProcessId != TheInitialProcessId)
+                    return BuildClosedResult(true, TheStopwatch, TheNormalizedHandle, TheInitialTitle, "handleReused");
+
+                if (TheStopwatch.ElapsedMilliseconds >= InTimeoutMs)
+                    return BuildClosedResult(false, TheStopwatch, TheNormalizedHandle, TheInitialTitle, null);
+                await Task.Delay(InPollIntervalMs);
+            }
+        }
 
         /// <summary>デバッグ中の全プロセス ID を取得する。DTE は UI スレッドでのみ触る（既存 UiTools.GetDebuggeeProcessId と同じ流儀）。</summary>
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         /// <returns>デバッグ中プロセス ID の集合。デバッグ中でなければ空。</returns>
-        private static Task<HashSet<uint>> GetDebuggedProcessIdsAsync(VsServiceAccessor InAccessor)
+        internal static Task<HashSet<uint>> GetDebuggedProcessIdsAsync(VsServiceAccessor InAccessor)
         {
             return InAccessor.RunOnUIThreadAsync(() =>
             {
@@ -487,7 +501,7 @@ namespace VsMcp.Extension.Tools
         /// <param name="InProcessIds">デバッグ中プロセス ID の集合。</param>
         /// <param name="InHandle">対象のトップレベル HWND。</param>
         /// <returns>WindowInfo。列挙に無ければ null。</returns>
-        private static Task<WindowInfo> FindWindowInfoAsync(HashSet<uint> InProcessIds, long InHandle)
+        internal static Task<WindowInfo> FindWindowInfoAsync(HashSet<uint> InProcessIds, long InHandle)
         {
             return Task.Run(() =>
                 DebuggeeWindowEnumerator.EnumerateTopLevelWindows(InProcessIds, true)
@@ -530,7 +544,7 @@ namespace VsMcp.Extension.Tools
         /// <param name="InHandle">キャプチャ対象の HWND（範囲検証済み。子 HWND でもよい）。</param>
         /// <param name="InResolution">text の先頭に置く解決情報（requestedHandle、requestedTitle 系、source 系）。</param>
         /// <returns>text（解決情報 + normalizedHandle + window + 画像メタ情報）+ image、またはエラー。</returns>
-        private static async Task<McpToolResult> CaptureTopLevelWindowAsync(VsServiceAccessor InAccessor, long InHandle, JObject InResolution)
+        internal static async Task<McpToolResult> CaptureTopLevelWindowAsync(VsServiceAccessor InAccessor, long InHandle, JObject InResolution)
         {
             HashSet<uint> TheProcessIds = await GetDebuggedProcessIdsAsync(InAccessor);
             string TheHandleError = DebuggeeWindowResolver.ValidateAndNormalizeWindowHandle(InHandle, TheProcessIds, out IntPtr TheNormalized);
@@ -575,7 +589,7 @@ namespace VsMcp.Extension.Tools
         /// <summary>HWND が 0 より大きく、実行中プロセスの IntPtr に収まる値か判定する。</summary>
         /// <param name="InHandle">検証する値。</param>
         /// <returns>範囲内なら true。</returns>
-        private static bool IsHandleInRange(long InHandle)
+        internal static bool IsHandleInRange(long InHandle)
         {
             if (InHandle <= 0)
                 return false;
@@ -613,7 +627,7 @@ namespace VsMcp.Extension.Tools
         /// <param name="InArgs">ツール引数。</param>
         /// <param name="OutTimeoutMs">正規化後のタイムアウト。</param>
         /// <param name="OutPollIntervalMs">正規化後のポーリング間隔。</param>
-        private static void ParseWaitOptions(JObject InArgs, out int OutTimeoutMs, out int OutPollIntervalMs)
+        internal static void ParseWaitOptions(JObject InArgs, out int OutTimeoutMs, out int OutPollIntervalMs)
         {
             int TheTimeoutMs = InArgs.Value<int?>("timeoutMs") ?? DefaultWaitTimeoutMs;
             if (TheTimeoutMs < 0)
