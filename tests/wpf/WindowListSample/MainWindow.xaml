@@ -67,6 +67,11 @@
                 <ContextMenu>
                     <MenuItem AutomationProperties.AutomationId="ContextMenuItemA" Header="Context Item A" Click="OnContextMenuItemAClick" />
                     <MenuItem AutomationProperties.AutomationId="ContextMenuItemB" Header="Context Item B" Click="OnContextMenuItemBClick" />
+                    <MenuItem AutomationProperties.AutomationId="ContextMenuSubmenu" Header="Submenu">
+                        <MenuItem AutomationProperties.AutomationId="ContextMenuSubItem1" Header="Sub Item 1" Click="OnContextMenuSubItem1Click" />
+                        <MenuItem AutomationProperties.AutomationId="ContextMenuSubItem2" Header="Sub Item 2" Click="OnContextMenuSubItem2Click" />
+                    </MenuItem>
+                    <MenuItem AutomationProperties.AutomationId="ContextMenuDisabledItem" Header="Disabled Item" IsEnabled="False" Click="OnContextMenuDisabledItemClick" />
                 </ContextMenu>
             </Label.ContextMenu>
         </Label>
@@ -87,6 +92,12 @@
         <Button AutomationProperties.AutomationId="BusyStartButton" Content="Busy (5 x 300ms)" Width="280" Height="30" Click="OnBusyStartClick" />
         <TextBlock x:Name="BusyStatusText" AutomationProperties.AutomationId="BusyStatusText" Text="Busy: idle" Width="280" Margin="0,4,0,4" />
         <StackPanel x:Name="BusyItemsPanel" AutomationProperties.AutomationId="BusyItemsPanel" Width="280" />
+        <Label AutomationProperties.AutomationId="Win32MenuTestArea" Content="Win32 Menu Area" Width="280" Height="40" Background="LightGray"
+               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+               MouseRightButtonUp="OnWin32MenuTestAreaMouseRightButtonUp" />
+        <Button x:Name="ShowWin32MenuButton" AutomationProperties.AutomationId="ShowWin32MenuButton" Content="Show Win32 Menu" Width="280" Height="30" Margin="0,4,0,0"
+                Click="OnShowWin32MenuButtonClick" />
+        <TextBlock x:Name="Win32MenuResultText" AutomationProperties.AutomationId="Win32MenuResultText" Text="Win32Menu: (none)" Width="280" Margin="0,4,0,0" />
     </StackPanel>
     </StackPanel>
 </Window>

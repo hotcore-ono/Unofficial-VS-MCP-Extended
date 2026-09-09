@@ -334,6 +334,33 @@ namespace WindowListSample
             ContextMenuCountText.Text = $"ContextMenu: opened {_ContextMenuOpenCount}, selected B";
         }
 
+        /// <summary>コンテキストメニューのサブメニュー内 Sub Item 1 が選択されたことを表示する（サブメニュー展開の検証用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnContextMenuSubItem1Click(object InSender, RoutedEventArgs InArgs)
+        {
+            ContextMenuCountText.Text = $"ContextMenu: opened {_ContextMenuOpenCount}, selected Sub Item 1";
+        }
+
+        /// <summary>コンテキストメニューのサブメニュー内 Sub Item 2 が選択されたことを表示する（サブメニュー展開の検証用）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnContextMenuSubItem2Click(object InSender, RoutedEventArgs InArgs)
+        {
+            ContextMenuCountText.Text = $"ContextMenu: opened {_ContextMenuOpenCount}, selected Sub Item 2";
+        }
+
+        /// <summary>
+        /// 無効項目が誤って起動された場合にそれを検出できるようにする（IsEnabled=False のため通常は呼ばれない。
+        /// 無効項目の選択が拒否されることを ContextMenuCountText の不変で確認するための検出器）。
+        /// </summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnContextMenuDisabledItemClick(object InSender, RoutedEventArgs InArgs)
+        {
+            ContextMenuCountText.Text = $"ContextMenu: opened {_ContextMenuOpenCount}, selected Disabled Item";
+        }
+
         /// <summary>DragSource 上での左ボタン押下でドラッグ追跡を開始し、マウスをキャプチャする（OLE の DoDragDrop は使わず手動で追跡する）。</summary>
         /// <param name="InSender">イベント送信元。</param>
         /// <param name="InArgs">マウスボタンイベント引数。</param>
@@ -402,6 +429,48 @@ namespace WindowListSample
                 }
             };
             TheTimer.Start();
+        }
+
+        /// <summary>
+        /// Win32MenuTestArea の右クリックでカーソル位置に Win32 ポップアップメニュー（ClassName "#32768"）を開く。
+        /// TrackPopupMenuEx はメニューが閉じるまで UI スレッドでモーダルループを回すため、戻り値が返ってから結果を表示する。
+        /// </summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">マウスボタンイベント引数。</param>
+        private void OnWin32MenuTestAreaMouseRightButtonUp(object InSender, MouseButtonEventArgs InArgs)
+        {
+            InArgs.Handled = true;
+            Point TheScreenPoint = PointToScreen(InArgs.GetPosition(this));
+            ShowWin32PopupMenu(TheScreenPoint);
+        }
+
+        /// <summary>ShowWin32MenuButton のクリックでボタン直下に同じ Win32 ポップアップメニューを開く（右クリック不要の経路）。</summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnShowWin32MenuButtonClick(object InSender, RoutedEventArgs InArgs)
+        {
+            Point TheScreenPoint = ShowWin32MenuButton.PointToScreen(new Point(0.0, ShowWin32MenuButton.ActualHeight));
+            ShowWin32PopupMenu(TheScreenPoint);
+        }
+
+        /// <summary>
+        /// Win32 ポップアップメニューを表示し、選択結果を Win32MenuResultText に表示する。
+        /// 座標はスクリーン物理 px でなければならないが、Visual.PointToScreen は内部で
+        /// CompositionTarget.TransformToDevice を適用済みのため、DPI 換算を重ねて行わない。
+        /// </summary>
+        /// <param name="InScreenPoint">メニュー左上のスクリーン物理座標。</param>
+        private void ShowWin32PopupMenu(in Point InScreenPoint)
+        {
+            IntPtr TheOwner = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            int TheCommandId = Win32MenuInterop.ShowPopupMenu(TheOwner, (int)InScreenPoint.X, (int)InScreenPoint.Y);
+            if (TheCommandId == 0)
+            {
+                Win32MenuResultText.Text = "Win32Menu: cancelled";
+            }
+            else
+            {
+                Win32MenuResultText.Text = $"Win32Menu: selected {TheCommandId}";
+            }
         }
     }
 }
