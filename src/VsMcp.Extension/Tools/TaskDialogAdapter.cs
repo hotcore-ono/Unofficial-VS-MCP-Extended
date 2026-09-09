@@ -29,14 +29,58 @@ namespace VsMcp.Extension.Tools
         private const string VerificationId = "VerificationCheckBox";
         private const string ExpandedInformationHint = "Expanded";
 
+        /// <summary>TaskDialog 固有の UIA ルート要素（ルート直下の Pane）の AutomationId / ClassName（Phase 5 実測）。</summary>
+        private const string TaskDialogRootAutomationId = "Window";
+        private const string TaskDialogRootClassName = "TaskDialog";
+
+        /// <summary>
+        /// IFileDialog（Open / Save / Folder）に現れ、TaskDialog には現れない Win32 クラス（Phase 6 実測）。
+        /// 最新の File Dialog も #32770 + DirectUIHWND なので、これらが 1 つでもあれば TaskDialog ではないと判定する。
+        /// </summary>
+        private static readonly string[] FileDialogClassNames = { "DUIViewWndClassName", "ComboBoxEx32", "ToolbarWindow32", "SHELLDLL_DefView", "SysListView32", "Address Band Root" };
+
         public string DialogType => StandardDialogResolver.TypeTaskDialog;
 
-        /// <summary>DirectUIHWND を持つ #32770 を TaskDialog とみなす。</summary>
+        /// <summary>
+        /// TaskDialog 判定: #32770 の子孫に DirectUIHWND があり、File Dialog 固有クラスが無く、
+        /// かつ UIA ルート直下に AutomationId="Window" / ClassName="TaskDialog" の Pane がある（Phase 5 実測の固有構造）。
+        /// </summary>
         /// <param name="InStructure">観測構造。</param>
         /// <returns>TaskDialog なら true。</returns>
         public bool CanHandle(StandardDialogStructure InStructure)
         {
-            return InStructure.HasChildOfClass(DirectUiClassName);
+            if (!InStructure.HasChildOfClass(DirectUiClassName))
+                return false;
+            foreach (string TheClassName in FileDialogClassNames)
+            {
+                if (InStructure.HasChildOfClass(TheClassName))
+                    return false;
+            }
+            return HasTaskDialogUiaRoot(InStructure);
+        }
+
+        /// <summary>UIA ルート直下に TaskDialog 固有の Pane（AutomationId "Window"、ClassName "TaskDialog"）があるか。UIA 不可なら false。</summary>
+        /// <param name="InStructure">観測構造。</param>
+        /// <returns>あれば true。</returns>
+        private static bool HasTaskDialogUiaRoot(StandardDialogStructure InStructure)
+        {
+            try
+            {
+                // この Pane は IsControlElement=false なので FindFirst（コントロールビュー）では見つからない。RawView で直下の子を走査する
+                TreeWalker TheWalker = TreeWalker.RawViewWalker;
+                for (AutomationElement TheChild = TheWalker.GetFirstChild(InStructure.Root); TheChild != null; TheChild = TheWalker.GetNextSibling(TheChild))
+                {
+                    AutomationElement.AutomationElementInformation TheCurrent = TheChild.Current;
+                    if (string.Equals(TheCurrent.AutomationId, TaskDialogRootAutomationId, StringComparison.Ordinal)
+                        && string.Equals(TheCurrent.ClassName, TaskDialogRootClassName, StringComparison.Ordinal))
+                        return true;
+                }
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>UIA の AutomationId を正本にして本文・ボタン・ラジオ・検証チェック・フッターを取得する。</summary>
