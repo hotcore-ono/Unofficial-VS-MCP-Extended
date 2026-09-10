@@ -42,6 +42,13 @@ namespace VsMcp.Extension.Tools
         /// <summary>待機系ツールの正規化後ポーリング間隔（ミリ秒）。wait.end に載せる。</summary>
         public int WaitPollIntervalMs { get; set; }
 
+        /// <summary>
+        /// この Tool 呼び出しで詳細状態ダンプを既にスケジュール済みか。
+        /// <see cref="DiagnosticErrorDump"/> は同じ correlationId につきダンプを 1 回だけ残すため、
+        /// 先に来た具体的な理由（modal.block / menu.fallback）を採用し、後続の tool.error / tool.exception を捨てる。
+        /// </summary>
+        public bool IsErrorDumpScheduled { get; set; }
+
         /// <summary>現在のスコープ（非同期の流れ・派生スレッドへ伝播したもの）。無ければ null。</summary>
         public static DiagnosticScope Current
         {

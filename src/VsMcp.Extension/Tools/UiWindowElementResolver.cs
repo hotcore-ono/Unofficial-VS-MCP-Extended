@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Windows;
 using System.Windows.Automation;
@@ -418,9 +419,12 @@ namespace VsMcp.Extension.Tools
         {
             OutElement = null;
             OutFailure = UiWindowResolveFailure.None;
+            // Extended (Phase 11): どの return 経路でも所要時間を読めるように、解決の入口で計測を始める
+            Stopwatch TheStopwatch = Stopwatch.StartNew();
             if (!InSelector.HasCriteria)
             {
                 OutFailure = UiWindowResolveFailure.NoCriteria;
+                EmitResolve(InWindow, InSelector, OutFailure, 0, 0, TheStopwatch);
                 return "At least one element selector must be provided (automationId, name, controlType, or className)";
             }
 
@@ -432,6 +436,7 @@ namespace VsMcp.Extension.Tools
             catch (Exception TheException)
             {
                 OutFailure = UiWindowResolveFailure.RootUnavailable;
+                EmitResolve(InWindow, InSelector, OutFailure, 0, 0, TheStopwatch);
                 return $"Window handle {InWindow.ToInt64()} could not be opened as a UI Automation root: {TheException.Message}";
             }
 
@@ -446,12 +451,14 @@ namespace VsMcp.Extension.Tools
             {
                 // Extended (Phase 9): 走査が内部上限で打ち切られた時点の候補は「全候補」ではないので、一意性を主張せずに拒否する
                 OutFailure = UiWindowResolveFailure.SearchAborted;
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
                 return $"Element search in window {InWindow.ToInt64()} was aborted after {_MAX_VISITED_ELEMENTS} elements; narrow the selector " +
                     $"(criteria: {InSelector.Describe()})";
             }
             if (TheMatches.Count == 0)
             {
                 OutFailure = UiWindowResolveFailure.NotFound;
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, 0, TheStopwatch);
                 return $"Element with {InSelector.Describe()} not found in window {InWindow.ToInt64()}";
             }
 
@@ -465,6 +472,7 @@ namespace VsMcp.Extension.Tools
                         ? $"at least {_MAX_INDEXED_CANDIDATES}"
                         : TheMatches.Count.ToString();
                     OutFailure = UiWindowResolveFailure.IndexOutOfRange;
+                    EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
                     return $"Element index {InSelector.Index.Value} is out of range: {TheMatchCountText} element(s) match {InSelector.Describe()} in window {InWindow.ToInt64()}";
                 }
                 TheSelected = TheMatches[InSelector.Index.Value];
@@ -480,6 +488,7 @@ namespace VsMcp.Extension.Tools
                 }
                 string TheCountText = TheMatches.Count > _MAX_AMBIGUOUS_CANDIDATES ? $"more than {_MAX_AMBIGUOUS_CANDIDATES}" : TheMatches.Count.ToString();
                 OutFailure = UiWindowResolveFailure.Ambiguous;
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
                 return $"{TheCountText} elements match {InSelector.Describe()} in window {InWindow.ToInt64()}. " +
                     "Add more selector criteria (automationId / name / controlType / className) or pass 'index' to pick one. Candidates:\n" +
                     JsonConvert.SerializeObject(TheCandidates, Formatting.Indented);
@@ -494,11 +503,13 @@ namespace VsMcp.Extension.Tools
             if (TheRootHandle == 0)
             {
                 OutFailure = UiWindowResolveFailure.OtherWindow;
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
                 return $"Element with {InSelector.Describe()} has no resolvable top-level window (no ancestor exposes a native window handle); refusing to act on it";
             }
             if (TheRootHandle != InWindow.ToInt64())
             {
                 OutFailure = UiWindowResolveFailure.OtherWindow;
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
                 return $"Element with {InSelector.Describe()} belongs to window {TheRootHandle}, not to the requested window {InWindow.ToInt64()}; refusing to act on it";
             }
 
@@ -517,9 +528,57 @@ namespace VsMcp.Extension.Tools
             catch (ElementNotAvailableException)
             {
                 OutFailure = UiWindowResolveFailure.Disappeared;
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
                 return $"Element with {InSelector.Describe()} disappeared while it was being resolved";
             }
+            EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
             return null;
+        }
+
+        /// <summary>
+        /// Extended (Phase 11): 単一要素の解決結果を verbose の診断イベント uia.resolve として記録する。
+        /// Verbose が無効なときは何もしない（data の組み立ても行わないのでコストは判定 1 回だけ）。
+        /// </summary>
+        /// <param name="InWindow">解決対象のトップレベル HWND。</param>
+        /// <param name="InSelector">解決に使ったセレクター。</param>
+        /// <param name="InFailure">解決結果の区分（None は成功）。</param>
+        /// <param name="InVisitedCount">走査した要素数。走査前に失敗した場合は 0。</param>
+        /// <param name="InMatchCount">条件に一致した要素数（上限で打ち切った場合はその時点の数）。</param>
+        /// <param name="InStopwatch">解決の入口から計測している Stopwatch。</param>
+        private static void EmitResolve(IntPtr InWindow, UiWindowElementSelector InSelector, UiWindowResolveFailure InFailure,
+            int InVisitedCount, int InMatchCount, Stopwatch InStopwatch)
+        {
+            if (!DiagnosticHub.IsEnabled(DiagnosticLevel.Verbose))
+            {
+                return;
+            }
+
+            long TheElapsedMs = InStopwatch.ElapsedMilliseconds;
+            DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.UIA, "uia.resolve", InData =>
+            {
+                InData["windowHandle"] = InWindow.ToInt64();
+                InData["visitedCount"] = InVisitedCount;
+                InData["elapsedMs"] = TheElapsedMs;
+                InData["matchCount"] = InMatchCount;
+                InData["failure"] = InFailure.ToString();
+                // TryResolveSingle は ControlView 固定で走査するので、view は常に control
+                InData["view"] = "control";
+                // Phase 10 の引数サマリーと同じ方針: AutomationId / ClassName / ControlType はそのまま、Name は有無と長さだけ
+                InData["automationId"] = InSelector.AutomationId;
+                InData["className"] = InSelector.ClassName;
+                InData["controlType"] = InSelector.ControlTypeName;
+                if (InSelector.Index.HasValue)
+                {
+                    InData["index"] = InSelector.Index.Value;
+                }
+                InData["hasName"] = !string.IsNullOrEmpty(InSelector.Name);
+                InData["nameLength"] = InSelector.Name == null ? 0 : InSelector.Name.Length;
+                if (DiagnosticSanitizer.CanIncludeElementText(InSelector.AutomationId, InSelector.Name, DiagnosticHub.Settings))
+                {
+                    // includeUiText が有効で、かつパスワード系でない場合だけ Name 本文を残す
+                    InData["name"] = DiagnosticSanitizer.SanitizeText(InSelector.Name, DiagnosticHub.Settings);
+                }
+            });
         }
     }
 }

@@ -43,7 +43,7 @@ namespace VsMcp.Extension.Tools
         /// 詳細状態ダンプを背景で収集して記録する。errorDetailDump=false のとき、または診断が無効のときは何もしない。
         /// </summary>
         /// <param name="InScope">記録元の相関スコープ。null なら何もしない。</param>
-        /// <param name="InToolName">Tool 名。</param>
+        /// <param name="InToolName">Tool 名。null / 空ならスコープの Tool 名で補う。</param>
         /// <param name="InLevel">記録する水準（error / warning）。</param>
         /// <param name="InReason">ダンプを取る理由（"tool.error" / "modal.block" / "menu.fallback" / "interaction.fallback"）。</param>
         public static void Schedule(DiagnosticScope InScope, string InToolName, DiagnosticLevel InLevel, string InReason)
@@ -53,9 +53,10 @@ namespace VsMcp.Extension.Tools
 
         /// <summary>
         /// 詳細状態ダンプを背景で収集して記録する（対象ウィンドウを指定する版）。
+        /// 同じ相関スコープでは 1 回しかスケジュールしない（先に来た具体的な理由を残し、後続の tool.error / tool.exception は捨てる）。
         /// </summary>
         /// <param name="InScope">記録元の相関スコープ。null なら何もしない。</param>
-        /// <param name="InToolName">Tool 名。</param>
+        /// <param name="InToolName">Tool 名。null / 空ならスコープの Tool 名で補う。</param>
         /// <param name="InLevel">記録する水準（error / warning）。</param>
         /// <param name="InReason">ダンプを取る理由。</param>
         /// <param name="InTargetWindowHandle">対象のトップレベル HWND（10 進）。不明なら 0。</param>
@@ -69,8 +70,17 @@ namespace VsMcp.Extension.Tools
                     return;
                 }
 
+                if (InScope.IsErrorDumpScheduled)
+                {
+                    // 同じ correlationId のダンプは 1 件だけにする（modal.block / menu.fallback の直後に来る tool.error で二重に撮らない）
+                    return;
+                }
+                InScope.IsErrorDumpScheduled = true;
+
+                // modal.block / menu.fallback の経路は Tool 名を渡してこないので、スコープの Tool 名で補う
+                string TheToolName = string.IsNullOrEmpty(InToolName) ? InScope.ToolName : InToolName;
                 string TheCorrelationId = InScope.CorrelationId;
-                Task.Run(() => CollectAndEmitAsync(TheCorrelationId, InToolName, InLevel, InReason, InTargetWindowHandle, TheSettings));
+                Task.Run(() => CollectAndEmitAsync(TheCorrelationId, TheToolName, InLevel, InReason, InTargetWindowHandle, TheSettings));
             }
             catch (Exception)
             {
@@ -383,11 +393,12 @@ namespace VsMcp.Extension.Tools
                         return null;
                     }
                     Directory.CreateDirectory(ScreenshotFolderPath);
+                    // Tool 名が分からない経路でもファイル名の Tool 名部分を空にしない
                     string TheFileName = string.Format("{0}-{1}-{2}-{3}.png",
                         DateTime.Now.ToString("yyyyMMdd-HHmmss"),
                         DiagnosticHub.Session.SessionId,
                         InCorrelationId,
-                        InToolName);
+                        string.IsNullOrEmpty(InToolName) ? "unknown" : InToolName);
                     string ThePath = Path.Combine(ScreenshotFolderPath, TheFileName);
                     TheBitmap.Save(ThePath, ImageFormat.Png);
                     return ThePath;
