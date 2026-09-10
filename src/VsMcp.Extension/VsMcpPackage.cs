@@ -149,6 +149,7 @@ namespace VsMcp.Extension
 
         private void RegisterTools()
         {
+            DiagnosticHub.Initialize(_serviceAccessor, _toolRegistry); // Extended: diagnostic trace infrastructure (must be ready before Extended tools register)
             GeneralTools.Register(_toolRegistry, _serviceAccessor);
             FocusGuardTools.Register(_toolRegistry, _serviceAccessor);
             SolutionTools.Register(_toolRegistry, _serviceAccessor);
@@ -167,6 +168,7 @@ namespace VsMcp.Extension
             UiWindowIdleTools.Register(_toolRegistry, _serviceAccessor); // Extended: wait idle for any debuggee window set
             UiMenuTools.Register(_toolRegistry, _serviceAccessor); // Extended: popup / context menu detection, selection, capture and waiting
             UiWindowKeyboardTools.Register(_toolRegistry, _serviceAccessor); // Extended: window-aware key input for any debuggee window
+            DiagnosticTraceTools.Register(_toolRegistry, _serviceAccessor); // Extended: diagnostic trace status / level / marker / export / flush
             WatchTools.Register(_toolRegistry, _serviceAccessor);
             ThreadTools.Register(_toolRegistry, _serviceAccessor);
             ProcessTools.Register(_toolRegistry, _serviceAccessor);
@@ -354,6 +356,7 @@ namespace VsMcp.Extension
                 }
                 WebTools.Shutdown();
                 _httpServer?.Dispose();
+                DiagnosticHub.Shutdown(); // Extended: stop the server first, then flush the diagnostic queue within a bounded time
             }
             base.Dispose(disposing);
         }
