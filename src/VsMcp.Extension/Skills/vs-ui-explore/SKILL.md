@@ -5,7 +5,7 @@ description: Operate the UI of a Visual Studio debuggee with the Extended vs-mcp
 
 # vs-ui-explore
 
-Revision: Phase 11 (+Phase 12/13 notes)
+Revision: Phase 11 (+Phase 12/13/14 notes)
 
 ## Purpose
 
@@ -95,6 +95,12 @@ English Windows and are informational only.
 **Screenshots are secondary.** Decide from HWNDs, structured info and the UIA
 tree; use an image only to confirm or to describe something to the user. Never
 derive click coordinates from a screenshot.
+
+**Debuggee lifecycle.** `debug_start` launches the solution's startup project.
+For any other executable, or for custom arguments, start the process outside
+Visual Studio and attach with `debug_attach`. When you want to kill an attached
+process, call `process_terminate` **before** `debug_stop`: `debug_stop` detaches
+first, and `process_terminate` on a detached process can fail.
 
 ## Normal Window
 
