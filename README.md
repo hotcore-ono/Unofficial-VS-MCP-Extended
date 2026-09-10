@@ -474,6 +474,14 @@ Source files live under `src/VsMcp.Extension/Skills/`; edit them there and the
 extension will redeploy the updated copy on next launch (it compares file
 content and skips unchanged files).
 
+## Extended additions
+
+- `ui_window_*` — window list / info / find / click / keys for **any** debuggee window, not just the main one.
+- `ui_menu_*` — detect, inspect, select and dismiss popup / context / Win32 menus.
+- `standard_dialog_*` / `standard_file_dialog_*` — MessageBox, TaskDialog and Open / Save / Folder dialogs, driven by logical action or control ID instead of localized captions.
+- `diagnostics_*` — persistent JSONL trace of the tools plus a ZIP export for bug reports.
+- Details: `docs/extended/` (`10-CLAUDE-GUIDANCE-AND-SKILL.md`, `11-DIAGNOSTICS.md`).
+
 ## Contributing
 
 **Pull Requests are not accepted.**
