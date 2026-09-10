@@ -52,6 +52,7 @@ namespace VsMcp.Extension.Tools
                     "(owner exists and is disabled — a guess, not a guarantee), bounds as 'x,y,width,height' in screen physical pixels " +
                     "(same coordinate space as the bounds returned by ui_find_elements / ui_snapshot), dpi, and the monitor device name. " +
                     "Windows are returned in Z-order (frontmost first). Use the handle to identify a specific window, e.g. a modal dialog, in later calls. " +
+                    "A window that may have closed must be re-detected here (or with ui_wait_for_window) instead of reusing its old HWND. " +
                     "For browser pages use web_* tools instead.",
                     SchemaBuilder.Create()
                         .AddBoolean("includeInvisible", "Include hidden top-level windows (IsWindowVisible == false). Default: false")

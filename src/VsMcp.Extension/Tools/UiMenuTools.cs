@@ -199,7 +199,7 @@ namespace VsMcp.Extension.Tools
                     "submenu is expanded the mouse cursor is moved onto that item (no click, the position is not restored) because a WPF menu follows the hover and " +
                     "would close the submenu again; the move is skipped — and reported in 'note' — when the window under that point is not the menu itself. Returns " +
                     "text { message, method, menuHandle, item, cursorMoved, menuClosed, closeWaitMs (time actually spent waiting), submenuOpened, submenu, " +
-                    "submenuCandidates, submenuDetection (ownerMatch / newHandle / null), note }.",
+                    "submenuCandidates, submenuDetection (ownerMatch / newHandle / null), note }. For a nested path prefer ui_menu_select_path.",
                     SchemaBuilder.Create()
                         .AddInteger("handle", "HWND of the popup menu (decimal)", required: true)
                         .AddInteger("itemId", "Win32 command ID of the item (from items[].id; null — and therefore never matched — for WPF menus and for any item " +

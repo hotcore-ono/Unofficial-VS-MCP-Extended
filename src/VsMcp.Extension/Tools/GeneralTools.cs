@@ -283,7 +283,24 @@ namespace VsMcp.Extension.Tools
                         + "Firefox: start with -start-debugger-server (e.g. firefox -start-debugger-server 6000). Requires devtools.debugger.remote-enabled=true in about:config. "
                         + "Use web_connect with browser='auto' (default) to auto-detect, or browser='chrome'/'firefox' to specify. "
                         + "Call web_console/web_network with action='enable' to start monitoring before navigating. "
-                        + "Use web_js_execute for JavaScript evaluation, web_dom_query for CSS selectors, web_screenshot for page captures."
+                        + "Use web_js_execute for JavaScript evaluation, web_dom_query for CSS selectors, web_screenshot for page captures.",
+                    // Extended (Phase 11): Extended ツール群の優先順位と安全規則。詳細な手順は Skill 'vs-ui-explore' 側に置く
+                    extended_ui_automation = "This supersedes the 'ui_automation' guideline above for any debuggee window other than the main window, and for all keyboard input. "
+                        + "TOOL PRIORITY: standard_dialog_* > generic click for MessageBox / TaskDialog; "
+                        + "standard_file_dialog_* > generic click for Open / Save / Folder dialogs; ui_menu_* > generic click for popup / context menus; "
+                        + "ui_window_* > upstream generic ui_* for any window other than the main window; ui_window_send_keys > upstream ui_send_keys. "
+                        + "The Extended tools take an explicit window handle, so they reach modal dialogs, owned windows and popups; the upstream generic tools are fixed to the main window. "
+                        + "MODAL SAFETY: when an error mentions 'blocked by modal window', ownerDisabled or siblingDisabled, do not click the owner again - handle the blocking dialog first. "
+                        + "STALE HWND: re-detect a window / dialog / menu that may have closed (ui_list_windows, ui_wait_for_window, standard_dialog_detect, standard_file_dialog_detect, ui_menu_detect) instead of reusing an old handle. "
+                        + "SELECTORS: prefer automationId, then className / controlType, then name; localized captions are informational only. Never pick an ambiguous candidate with index=0 - narrow the selector instead. "
+                        + "KEYBOARD: use ui_window_send_keys; the upstream ui_send_keys injects nothing on x64 Visual Studio (SendInput reports inserted=0, measured in Phase 9). "
+                        + "SEARCH: keep view='control' and use view='raw' only when an element is missing there, bounded by maxVisited / maxResults; truncated=true means the result is incomplete. "
+                        + "The Claude Code skill 'vs-ui-explore' has the full workflows.",
+                    extended_diagnostics = "Standard flow: diagnostics_get_status (enabled, level, writerHealthy, droppedEventCount, currentLogFile) -> diagnostics_mark before the reproduction -> reproduce -> diagnostics_export. "
+                        + "For export prefer 'sessionId' (the whole session with your markers), then 'minutes'; 'correlationId' covers one tool call only and a marker's correlationId returns just the marker. "
+                        + "writerHealthy=false means the JSONL may be missing, so an empty export is not proof that nothing happened. "
+                        + "Keep the level at 'info' for normal work, use 'verbose' while reproducing and 'trace' only for a short deep dive, then return to 'info' with diagnostics_set_level. "
+                        + "send_keys text, file names and paths and secret-looking values are never written to the log; never put a password or token into a diagnostics_mark message."
                 }
             }));
         }

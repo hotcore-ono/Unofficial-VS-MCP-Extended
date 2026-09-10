@@ -100,7 +100,8 @@ namespace VsMcp.Extension.Tools
                     "so any difference is visible rather than guessed. 'geometry' adds the values read at call time in physical screen pixels: windowBoundsPhysical " +
                     "('x,y,width,height', negative coordinates on secondary monitors are normal), dpi (GetDpiForWindow, no fixed 96 DPI conversion), monitorName, " +
                     "monitorBounds, monitorWorkArea and isPrimaryMonitor; values that cannot be read are null. " +
-                    "The handle is validated first (exists, normalized to its top-level window, belongs to a debugged process).",
+                    "The handle is validated first (exists, normalized to its top-level window, belongs to a debugged process). " +
+                    "A window that may have closed must be re-detected with ui_list_windows / ui_wait_for_window instead of reusing its old HWND.",
                     SchemaBuilder.Create()
                         .AddInteger("windowHandle", "HWND of the window (decimal)", required: true)
                         .Build()),
@@ -119,7 +120,8 @@ namespace VsMcp.Extension.Tools
                     "The walk is bounded by 'maxVisited' (default 10000) in addition to the 30 second timeout, and 'view' selects the UI Automation tree view: " +
                     "'control' (default, the same elements as ui_find_elements) or 'raw', which also returns elements with IsControlElement=false (for example the " +
                     "'TaskDialog' Pane of a TaskDialog) but never leaves the given window. The response adds 'visitedCount', 'elapsedMs', 'truncated' (the walk was " +
-                    "stopped by maxVisited or by the timeout, so the result may be incomplete) and 'view'; all existing fields are unchanged.",
+                    "stopped by maxVisited or by the timeout, so the result may be incomplete) and 'view'; all existing fields are unchanged. " +
+                    "Start with 'automationId' or 'className' rather than 'controlType' alone, and keep view='control' unless the element is missing there.",
                     SchemaBuilder.Create()
                         .AddInteger("windowHandle", "HWND of the window whose descendants are searched (decimal)", required: true)
                         .AddString("name", "Name of the UI element to find")
