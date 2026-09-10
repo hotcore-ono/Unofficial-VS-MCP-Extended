@@ -37,7 +37,8 @@ namespace VsMcp.Extension.Tools
         {
             string[] TheModes = { "any", "open", "save", "folder" };
 
-            InRegistry.Register(
+            // Extended (Phase 10): 登録は DiagnosticToolRunner を通し、tool.start / tool.end と相関 ID を付ける（schema・戻り値・エラー文は不変）
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_file_dialog_detect",
                     "[Windows UIA — desktop app being debugged] List the standard Windows file dialogs (IFileDialog: Open File, Save File, Folder picker) currently shown by " +
@@ -54,7 +55,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => DetectAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_file_dialog_get_info",
                     "[Windows UIA — desktop app being debugged] Return the structured state of one standard file dialog of the debugged application by its HWND: dialogType, mode, " +
@@ -67,7 +68,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => GetInfoAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_file_dialog_capture",
                     "[Windows UIA — desktop app being debugged] Capture a screenshot of one standard file dialog of the debugged application by its HWND together with its " +
@@ -78,7 +79,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => CaptureAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_file_dialog_set_filename",
                     "[Windows UIA — desktop app being debugged] Set the file-name (or folder-name) text of a standard file dialog of the debugged application. The dialog is " +
@@ -91,7 +92,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => SetFileNameAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_file_dialog_select",
                     "[Windows UIA — desktop app being debugged] Select one item (file or folder) in the shell view of a standard file dialog of the debugged application by " +
@@ -105,7 +106,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => SelectAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_file_dialog_confirm",
                     "[Windows UIA — desktop app being debugged] Press the confirm button (control ID 1: Open / Save / Select Folder, whatever its caption) of a standard file dialog " +
@@ -117,7 +118,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => PressButtonAsync(InAccessor, InArgs, StandardFileDialogResolver.ConfirmControlId));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_file_dialog_cancel",
                     "[Windows UIA — desktop app being debugged] Press the cancel button (control ID 2) of a standard file dialog of the debugged application via UIA InvokePattern " +
@@ -127,7 +128,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => PressButtonAsync(InAccessor, InArgs, StandardFileDialogResolver.CancelControlId));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_file_dialog_wait",
                     "[Windows UIA — desktop app being debugged] Wait until a standard file dialog of the debugged application appears, optionally filtered by mode " +
@@ -144,7 +145,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => WaitAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_file_dialog_wait_closed",
                     "[Windows UIA — desktop app being debugged] Wait until the file dialog with the given HWND is closed. Same semantics as ui_wait_for_window_closed with a handle " +
@@ -253,6 +254,19 @@ namespace VsMcp.Extension.Tools
                 if (TheMethod == null)
                     return McpToolResult.Error($"Failed to set the file name on dialog {TheResolved.Info.Handle} (read back: '{TheReadBack}').");
 
+                // Extended (Phase 10): ファイル名の本文は出さず、長さ・種別・実行方式だけを診断へ残す
+                string TheAppliedMethod = TheMethod;
+                DiagnosticHub.Emit(DiagnosticLevel.Info, DiagnosticCategory.FILE_DIALOG, "fileDialog.setFilename", InData =>
+                {
+                    InData["dialogHandle"] = TheResolved.Info.Handle;
+                    InData["mode"] = TheResolved.Info.Mode;
+                    InData["method"] = TheAppliedMethod;
+                    InData["hasFileName"] = !string.IsNullOrEmpty(TheFileName);
+                    InData["fileNameLength"] = TheFileName.Length;
+                    InData["pathKind"] = DiagnosticSanitizer.DescribePathKind(TheFileName);
+                    InData["isAbsolute"] = DiagnosticSanitizer.IsAbsolutePath(TheFileName);
+                });
+
                 return McpToolResult.Success(new
                 {
                     handle = TheResolved.Info.Handle,
@@ -324,6 +338,22 @@ namespace VsMcp.Extension.Tools
                         return McpToolResult.Error($"Failed to select item '{TheItems[TheTarget].Name}' via SelectionItemPattern.");
 
                     List<StandardFileDialogItemInfo> TheAfter = StandardFileDialogResolver.ReadItems(TheResolved.Structure, TheResolved.Info.CurrentFolderPath);
+
+                    // Extended (Phase 10): 項目名・パスの本文は出さず、指定の種別と件数だけを診断へ残す
+                    int TheItemCount = TheItems.Count;
+                    DiagnosticHub.Emit(DiagnosticLevel.Info, DiagnosticCategory.FILE_DIALOG, "fileDialog.select", InData =>
+                    {
+                        InData["dialogHandle"] = TheResolved.Info.Handle;
+                        InData["mode"] = TheResolved.Info.Mode;
+                        InData["method"] = "uiaSelectionItem";
+                        InData["selectedBy"] = !string.IsNullOrEmpty(ThePath) ? "path" : "name";
+                        InData["hasPath"] = !string.IsNullOrEmpty(ThePath);
+                        InData["pathKind"] = DiagnosticSanitizer.DescribePathKind(ThePath);
+                        InData["isAbsolute"] = DiagnosticSanitizer.IsAbsolutePath(ThePath);
+                        InData["nameLength"] = TheName == null ? 0 : TheName.Length;
+                        InData["itemCount"] = TheItemCount;
+                    });
+
                     return McpToolResult.Success(new
                     {
                         handle = TheResolved.Info.Handle,
@@ -396,6 +426,20 @@ namespace VsMcp.Extension.Tools
                 }
                 await Task.Delay(ClosePollMs);
             }
+
+            // Extended (Phase 10): confirm / cancel の区別・実行方式・閉じたかを診断へ残す（表示文字列は出さない）
+            bool IsDialogClosed = TheIsClosed;
+            string TheAppliedMethod = TheMethod;
+            DiagnosticHub.EmitCore(DiagnosticLevel.Info, DiagnosticCategory.FILE_DIALOG,
+                InControlId == 1 ? "fileDialog.confirm" : "fileDialog.cancel", null, null,
+                TheStopwatch.ElapsedMilliseconds, IsDialogClosed ? "closed" : "stillOpen", null, InData =>
+                {
+                    InData["dialogHandle"] = TheResolved.Info.Handle;
+                    InData["mode"] = TheResolved.Info.Mode;
+                    InData["buttonId"] = InControlId;
+                    InData["method"] = TheAppliedMethod;
+                    InData["dialogClosed"] = IsDialogClosed;
+                }, null);
 
             return McpToolResult.Success(new
             {

@@ -123,6 +123,19 @@ namespace VsMcp.Extension.Tools
 
             OutState = TheState;
             OutWindow = TheTarget;
+
+            // Extended (Phase 10): 判定結果を診断へ残す（判定そのものは変えない）
+            DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.MODAL, "modal.evaluate", InData =>
+            {
+                InData["targetHandle"] = InWindowHandle;
+                InData["isBlocked"] = TheState.IsBlockedByModal;
+                InData["blockingHandle"] = TheState.BlockingWindowHandle;
+                InData["blockingModalCandidateReason"] = TheState.BlockingModalCandidateReason;
+                InData["reason"] = TheState.Reason;
+                InData["targetEnabled"] = TheState.IsWindowEnabled;
+                InData["targetVisible"] = TheState.IsWindowVisible;
+                InData["targetIsModalCandidate"] = TheState.IsWindowModalCandidate;
+            });
             return null;
         }
 
@@ -207,6 +220,21 @@ namespace VsMcp.Extension.Tools
             {
                 return null;
             }
+
+            // Extended (Phase 10): 操作を拒否したことと、その根拠を warning として残す（エラー文は不変）
+            WindowInfo TheBlockedWindow = OutWindow;
+            UiWindowModalState TheBlockedState = OutState;
+            DiagnosticHub.Emit(DiagnosticLevel.Warning, DiagnosticCategory.MODAL, "modal.block", InData =>
+            {
+                InData["targetHandle"] = TheBlockedWindow.Handle;
+                InData["isBlocked"] = TheBlockedState.IsBlockedByModal;
+                InData["blockingHandle"] = TheBlockedState.BlockingWindowHandle;
+                InData["blockingModalCandidateReason"] = TheBlockedState.BlockingModalCandidateReason;
+                InData["reason"] = TheBlockedState.Reason;
+                InData["targetEnabled"] = TheBlockedState.IsWindowEnabled;
+                InData["targetVisible"] = TheBlockedState.IsWindowVisible;
+            });
+            DiagnosticErrorDump.Schedule(DiagnosticScope.Current, null, DiagnosticLevel.Warning, "modal.block", TheBlockedWindow.Handle);
             return DescribeNotInteractable(OutWindow, OutState);
         }
 

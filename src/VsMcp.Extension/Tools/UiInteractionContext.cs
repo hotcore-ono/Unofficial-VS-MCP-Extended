@@ -141,6 +141,15 @@ namespace VsMcp.Extension.Tools
         /// <returns>エラーメッセージ。</returns>
         private static string DescribeChangedWindow(long InHandle, string InDetail, string InExpectedClassification)
         {
+            // Extended (Phase 10): 実行直前の再検証で弾いたことを warning として残す（エラー文は不変）
+            DiagnosticHub.Emit(DiagnosticLevel.Warning, DiagnosticCategory.INTERACTION, "interaction.prepare", InData =>
+            {
+                InData["failure"] = "windowChanged";
+                InData["rootWindowHandle"] = InHandle;
+                InData["detail"] = InDetail;
+                InData["expectedClassification"] = InExpectedClassification;
+            });
+
             string TheMessage = $"Window {InHandle} changed before the action could run ({InDetail}); nothing was done.";
             if (string.IsNullOrEmpty(InExpectedClassification))
             {
@@ -166,10 +175,12 @@ namespace VsMcp.Extension.Tools
             string TheResolveError = UiWindowElementResolver.TryResolveSingle(Window, InSelector, out OutElement, out OutFailure);
             if (TheResolveError != null)
             {
+                EmitPrepareFailure(InSelector, InIsPhysical, InRole, OutFailure.ToString());
                 return ThePrefix + TheResolveError;
             }
             if (!OutElement.IsEnabled)
             {
+                EmitPrepareFailure(InSelector, InIsPhysical, InRole, "disabled");
                 return $"{ThePrefix}Element with {InSelector.Describe()} is disabled (IsEnabled=false); refusing to act on it";
             }
             if (InIsPhysical)
@@ -177,10 +188,58 @@ namespace VsMcp.Extension.Tools
                 string TheBoundsError = DescribePhysicalPrerequisite(OutElement, InSelector);
                 if (TheBoundsError != null)
                 {
+                    EmitPrepareFailure(InSelector, InIsPhysical, InRole, OutElement.IsOffscreen ? "offscreen" : "noBounds");
                     return ThePrefix + TheBoundsError;
                 }
             }
+
+            // Extended (Phase 10): 解決できた要素の識別情報を診断へ残す（Name 本文は includeUiText のときだけ）
+            UiWindowResolvedElement TheElement = OutElement;
+            bool IsPhysical = InIsPhysical;
+            DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.INTERACTION, "interaction.prepare", InData =>
+            {
+                InData["rootWindowHandle"] = TheElement.RootWindowHandle;
+                InData["automationId"] = ReadElementInfoText(TheElement, "automationId");
+                InData["elementControlType"] = ReadElementInfoText(TheElement, "controlType");
+                InData["className"] = ReadElementInfoText(TheElement, "className");
+                InData["bounds"] = $"{(int)TheElement.Bounds.X},{(int)TheElement.Bounds.Y},{(int)TheElement.Bounds.Width},{(int)TheElement.Bounds.Height}";
+                InData["isPhysical"] = IsPhysical;
+                InData["role"] = InRole;
+            });
             return null;
+        }
+
+        /// <summary>Extended (Phase 10): 要素の解決・前提確認に失敗したことを warning として記録する（エラー文は不変）。</summary>
+        /// <param name="InSelector">要素セレクター。</param>
+        /// <param name="InIsPhysical">物理入力を伴う操作か。</param>
+        /// <param name="InRole">呼び出し側が付けた役割名。</param>
+        /// <param name="InFailure">失敗の区分。</param>
+        private static void EmitPrepareFailure(UiWindowElementSelector InSelector, bool InIsPhysical, string InRole, string InFailure)
+        {
+            DiagnosticHub.Emit(DiagnosticLevel.Warning, DiagnosticCategory.INTERACTION, "interaction.prepare", InData =>
+            {
+                InData["failure"] = InFailure;
+                InData["isPhysical"] = InIsPhysical;
+                InData["role"] = InRole;
+                InData["automationId"] = InSelector.AutomationId;
+                InData["controlType"] = InSelector.ControlTypeName;
+                InData["className"] = InSelector.ClassName;
+                InData["hasName"] = !string.IsNullOrEmpty(InSelector.Name);
+                InData["index"] = InSelector.Index;
+            });
+        }
+
+        /// <summary>Extended (Phase 10): 解決済み要素の情報辞書から文字列項目を安全に読む。</summary>
+        /// <param name="InElement">解決済み要素。</param>
+        /// <param name="InKey">読む項目のキー。</param>
+        /// <returns>値。無ければ null。</returns>
+        private static string ReadElementInfoText(UiWindowResolvedElement InElement, string InKey)
+        {
+            if (InElement.Info == null || !InElement.Info.TryGetValue(InKey, out object TheValue) || TheValue == null)
+            {
+                return null;
+            }
+            return TheValue.ToString();
         }
 
         /// <summary>座標を使う操作の前提（画面上にあり、bounds がある）を確認する。Phase 7 と同文言。</summary>
@@ -223,7 +282,27 @@ namespace VsMcp.Extension.Tools
             }
 
             long TheTopmost = UiWindowActionValidator.ResolveTopmostRoot(InX, InY);
-            if (TheTopmost == Window.ToInt64() || AllowedPointRoots.Contains(TheTopmost))
+            bool IsAllowed = TheTopmost == Window.ToInt64() || AllowedPointRoots.Contains(TheTopmost);
+
+            // Extended (Phase 10): 座標ゲートの入力と結果を診断へ残す（判定・エラー文は不変）
+            long TheWindowHandle = Window.ToInt64();
+            bool IsForeground = IsForegroundEnsured;
+            DiagnosticHub.Emit(IsAllowed ? DiagnosticLevel.Verbose : DiagnosticLevel.Warning,
+                DiagnosticCategory.INTERACTION, "interaction.prepare", InData =>
+                {
+                    InData["rootWindowHandle"] = TheWindowHandle;
+                    InData["point"] = $"{InX},{InY}";
+                    InData["what"] = InWhat;
+                    InData["topmostHandle"] = TheTopmost;
+                    InData["foregroundEnsured"] = IsForeground;
+                    InData["pointAllowed"] = IsAllowed;
+                    if (!IsAllowed)
+                    {
+                        InData["failure"] = "pointCovered";
+                    }
+                });
+
+            if (IsAllowed)
             {
                 // 対象ウィンドウ自身か、明示的に許可した別ウィンドウ（開いているポップアップメニュー等）が最前面なら通す
                 return null;

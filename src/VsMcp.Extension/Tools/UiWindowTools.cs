@@ -41,7 +41,8 @@ namespace VsMcp.Extension.Tools
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         public static void Register(McpToolRegistry InRegistry, VsServiceAccessor InAccessor)
         {
-            InRegistry.Register(
+            // Extended (Phase 10): 登録は DiagnosticToolRunner を通し、tool.start / tool.end と相関 ID を付ける（schema・戻り値・エラー文は不変）
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_list_windows",
                     "[Windows UIA — desktop app being debugged] List the top-level windows of every process currently being debugged: " +
@@ -60,7 +61,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiListWindowsAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_capture_window_by_handle",
                     "[Windows UIA — desktop app being debugged] Capture a screenshot of one specific top-level window of the debugged application by its HWND " +
@@ -75,7 +76,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiCaptureWindowByHandleAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_capture_window_by_title",
                     "[Windows UIA — desktop app being debugged] Capture a screenshot of one visible top-level window of the debugged application located by its title " +
@@ -93,7 +94,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiCaptureWindowByTitleAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_get_active_window",
                     "[Windows UIA — desktop app being debugged] Return the top-level window of the debugged application that is effectively active, without capturing it. " +
@@ -106,7 +107,7 @@ namespace VsMcp.Extension.Tools
                     SchemaBuilder.Create().Build()),
                 InArgs => UiGetActiveWindowAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_capture_active_window",
                     "[Windows UIA — desktop app being debugged] Capture a screenshot of the effectively active top-level window of the debugged application. " +
@@ -117,7 +118,7 @@ namespace VsMcp.Extension.Tools
                     SchemaBuilder.Create().Build()),
                 InArgs => UiCaptureActiveWindowAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_wait_for_window",
                     "[Windows UIA — desktop app being debugged] Wait until a top-level window of the debugged application appears. Give either 'handle' or 'title'. " +
@@ -138,7 +139,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiWaitForWindowAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_wait_for_window_closed",
                     "[Windows UIA — desktop app being debugged] Wait until a top-level window of the debugged application is closed. Prefer 'handle' (the value from " +
@@ -520,6 +521,18 @@ namespace VsMcp.Extension.Tools
             ActiveWindowResolution TheResolution = await Task.Run(() =>
                 DebuggeeWindowResolver.ResolveActiveWindow(
                     TheProcessIds, DebuggeeWindowEnumerator.EnumerateTopLevelWindows(TheProcessIds, false)));
+
+            // Extended (Phase 10): アクティブウィンドウ解決の結果（採用理由・候補数）を診断へ残す（解決そのものは変えない）
+            ActiveWindowResolution TheResolved = TheResolution;
+            DiagnosticHub.Emit(TheResolved.IsResolved ? DiagnosticLevel.Info : DiagnosticLevel.Warning, DiagnosticCategory.WINDOW,
+                TheResolved.IsResolved ? "window.resolve.success" : "window.resolve.failure", InData =>
+                {
+                    InData["normalizedHandle"] = TheResolved.IsResolved ? TheResolved.Resolved.Handle : 0;
+                    InData["resolutionReason"] = TheResolved.Source;
+                    InData["candidateCount"] = TheResolved.Candidates.Count;
+                    InData["foregroundHandle"] = TheResolved.ForegroundHandle;
+                });
+
             if (TheResolution.IsResolved)
                 return (TheResolution, null);
 
@@ -579,6 +592,16 @@ namespace VsMcp.Extension.Tools
                     ["originalHeight"] = TheOriginalHeight,
                     ["mimeType"] = TheMimeType,
                 };
+
+                // Extended (Phase 10): キャプチャした対象と画像の大きさを診断へ残す（画像そのものは JSONL に入れない）
+                DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.CAPTURE, "capture.window", InData =>
+                {
+                    InData["handle"] = TheNormalizedHandle;
+                    InData["width"] = TheOriginalWidth;
+                    InData["height"] = TheOriginalHeight;
+                    InData["mimeType"] = TheMimeType;
+                    InData["bytes"] = TheBase64 == null ? 0 : TheBase64.Length;
+                });
 
                 McpToolResult TheResult = McpToolResult.Success(TheText.ToString(Formatting.Indented));
                 TheResult.Content.Add(new McpContent { Type = "image", Data = TheBase64, MimeType = TheMimeType });
@@ -641,6 +664,22 @@ namespace VsMcp.Extension.Tools
 
             OutTimeoutMs = TheTimeoutMs;
             OutPollIntervalMs = ThePollIntervalMs;
+
+            // Extended (Phase 10): 待機系ツール（ui_wait_for_window(_closed) / ui_window_wait_idle / ui_menu_wait(_closed) /
+            // standard_(file_)dialog_wait(_closed)）はすべてここを通るので、wait.start をここで 1 か所にまとめて出す。
+            // 対になる wait.end は DiagnosticToolRunner が tool.end と同時に出す（結果と所要時間の出どころを 1 つにするため）。
+            DiagnosticScope TheScope = DiagnosticScope.Current;
+            if (TheScope != null)
+            {
+                TheScope.IsWaitStarted = true;
+                TheScope.WaitTimeoutMs = TheTimeoutMs;
+                TheScope.WaitPollIntervalMs = ThePollIntervalMs;
+            }
+            DiagnosticHub.Emit(DiagnosticLevel.Info, DiagnosticCategory.WAIT, "wait.start", InData =>
+            {
+                InData["timeoutMs"] = TheTimeoutMs;
+                InData["pollIntervalMs"] = ThePollIntervalMs;
+            });
         }
 
         /// <summary>ui_wait_for_window_closed の戻り値を組み立てる。</summary>

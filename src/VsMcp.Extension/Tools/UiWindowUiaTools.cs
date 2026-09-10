@@ -41,7 +41,8 @@ namespace VsMcp.Extension.Tools
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         public static void Register(McpToolRegistry InRegistry, VsServiceAccessor InAccessor)
         {
-            InRegistry.Register(
+            // Extended (Phase 10): 登録は DiagnosticToolRunner を通し、tool.start / tool.end と相関 ID を付ける（schema・戻り値・エラー文は不変）
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_get_tree",
                     "[Windows UIA — desktop app being debugged] Get the raw UI element tree of ANY top-level window of the debugged application (modal dialog, MessageBox, " +
@@ -56,7 +57,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiWindowGetTreeAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_snapshot",
                     "[Windows UIA — desktop app being debugged] Capture a compact semantic snapshot (pruned UI Automation tree with actionable patterns, state flags, rect and " +
@@ -73,7 +74,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiWindowSnapshotAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_capture_region",
                     "[Windows UIA — desktop app being debugged] Capture a screenshot of a region of ANY top-level window of the debugged application identified by its HWND. " +
@@ -89,7 +90,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiWindowCaptureRegionAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_get_info",
                     "[Windows UIA — desktop app being debugged] Get the Win32 window info (same fields as ui_list_windows), the UI Automation root element, the currently focused " +
@@ -105,7 +106,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiWindowGetInfoAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_find_elements",
                     "[Windows UIA — desktop app being debugged] Find UI elements matching criteria (Name / AutomationId / ClassName / ControlType / hasPattern) inside ONE top-level " +
@@ -400,6 +401,17 @@ namespace VsMcp.Extension.Tools
             long TheRequiredRootHandle = TheWindow.ToInt64();
             Stopwatch TheStopwatch = Stopwatch.StartNew();
 
+            // Extended (Phase 10): 走査条件を診断へ残す（Name 本文は includeUiText のときだけ）。
+            // 対になる uia.search.end と同じ Info にして、既定の水準で開始と終了が必ず対で残るようにする
+            DiagnosticHub.Emit(DiagnosticLevel.Info, DiagnosticCategory.UIA, "uia.search.start", InData =>
+            {
+                InData["windowHandle"] = TheRequiredRootHandle;
+                InData["view"] = TheView;
+                InData["maxVisited"] = TheMaxVisited;
+                InData["maxResults"] = TheMaxResults;
+                InData["selectorSummary"] = BuildSelectorSummary(TheName, TheAutomationId, TheClassName, TheControlTypeName, TheHasPattern);
+            });
+
             using (CancellationTokenSource TheCancellation = new CancellationTokenSource())
             {
                 Task<string> TheSearchTask = UiTools.RunOnBackgroundSTAAsync(() =>
@@ -496,6 +508,11 @@ namespace VsMcp.Extension.Tools
                     TheVisitedSnapshot = Volatile.Read(ref TheVisitedCounter[0]);
                 }
 
+                // Extended (Phase 10): 走査量・打ち切り・タイムアウトを診断へ残す（戻り値は変えない）
+                bool IsTruncated = IsTimedOut || TheVisitedSnapshot >= TheMaxVisited;
+                EmitSearchEnd(TheRequiredRootHandle, TheView, TheVisitedSnapshot, TheSnapshot.Count, TheSkippedSnapshot,
+                    TheStopwatch.ElapsedMilliseconds, IsTruncated, IsTimedOut, TheMaxVisited);
+
                 if (IsTimedOut && TheSnapshot.Count == 0)
                 {
                     return McpToolResult.Error(
@@ -539,12 +556,18 @@ namespace VsMcp.Extension.Tools
         internal static async Task<(IntPtr Window, HashSet<uint> ProcessIds, McpToolResult Error)> ResolveWindowWithProcessesAsync(VsServiceAccessor InAccessor, JObject InArgs)
         {
             long? TheHandle = InArgs.Value<long?>("windowHandle");
+            // Extended (Phase 10): 解決の開始・成功・失敗を診断へ残す（判定順・エラー文は変えない）
+            DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.WINDOW, "window.resolve.start",
+                InData => InData["requestedHandle"] = TheHandle);
+
             if (!TheHandle.HasValue)
             {
+                EmitWindowResolveFailure(null, "missingHandle", 0);
                 return (IntPtr.Zero, null, McpToolResult.Error("Parameter 'windowHandle' is required (use the 'handle' value returned by ui_list_windows)"));
             }
             if (!UiWindowTools.IsHandleInRange(TheHandle.Value))
             {
+                EmitWindowResolveFailure(TheHandle, "handleOutOfRange", 0);
                 return (IntPtr.Zero, null, McpToolResult.Error($"Window handle {TheHandle.Value} is out of range for a window handle."));
             }
 
@@ -552,9 +575,109 @@ namespace VsMcp.Extension.Tools
             string TheHandleError = DebuggeeWindowResolver.ValidateAndNormalizeWindowHandle(TheHandle.Value, TheProcessIds, out IntPtr TheNormalized);
             if (TheHandleError != null)
             {
+                EmitWindowResolveFailure(TheHandle, "validationFailed", TheProcessIds.Count);
                 return (IntPtr.Zero, TheProcessIds, McpToolResult.Error(TheHandleError));
             }
+
+            long TheRequestedHandle = TheHandle.Value;
+            long TheNormalizedHandle = TheNormalized.ToInt64();
+            int TheProcessCount = TheProcessIds.Count;
+            DiagnosticHub.Emit(DiagnosticLevel.Info, DiagnosticCategory.WINDOW, "window.resolve.success", InData =>
+            {
+                InData["requestedHandle"] = TheRequestedHandle;
+                InData["normalizedHandle"] = TheNormalizedHandle;
+                InData["debuggedProcessCount"] = TheProcessCount;
+                InData["resolutionReason"] = "handle";
+            });
             return (TheNormalized, TheProcessIds, null);
+        }
+
+        /// <summary>
+        /// Extended (Phase 10): 検索条件を機密ポリシーに従って要約する。AutomationId / ClassName / ControlType はそのまま、
+        /// Name は includeUiText のときだけ本文を出し、それ以外は有無と長さだけにする。
+        /// </summary>
+        /// <param name="InName">Name 条件。</param>
+        /// <param name="InAutomationId">AutomationId 条件。</param>
+        /// <param name="InClassName">ClassName 条件。</param>
+        /// <param name="InControlTypeName">ControlType 条件。</param>
+        /// <param name="InHasPattern">hasPattern 条件。</param>
+        /// <returns>要約した JSON。</returns>
+        private static JObject BuildSelectorSummary(string InName, string InAutomationId, string InClassName, string InControlTypeName, string InHasPattern)
+        {
+            JObject TheSummary = new JObject
+            {
+                ["automationId"] = InAutomationId,
+                ["className"] = InClassName,
+                ["controlType"] = InControlTypeName,
+                ["hasPattern"] = InHasPattern,
+                ["hasName"] = !string.IsNullOrEmpty(InName),
+                ["nameLength"] = InName == null ? 0 : InName.Length,
+            };
+            string TheName = DiagnosticSanitizer.SanitizeUiText(InName, DiagnosticHub.Settings);
+            if (TheName != null)
+            {
+                TheSummary["name"] = TheName;
+            }
+            return TheSummary;
+        }
+
+        /// <summary>Extended (Phase 10): UIA 検索の終了・打ち切り・タイムアウトを記録する。</summary>
+        /// <param name="InWindowHandle">検索 root のトップレベル HWND。</param>
+        /// <param name="InView">走査ビュー（control / raw）。</param>
+        /// <param name="InVisitedCount">訪問した要素数。</param>
+        /// <param name="InResultCount">返す要素数。</param>
+        /// <param name="InSkippedOtherWindows">別ウィンドウ所属で除外した数。</param>
+        /// <param name="InElapsedMs">所要時間（ミリ秒）。</param>
+        /// <param name="InIsTruncated">上限またはタイムアウトで打ち切ったか。</param>
+        /// <param name="InIsTimedOut">タイムアウトしたか。</param>
+        /// <param name="InMaxVisited">訪問数の上限。</param>
+        private static void EmitSearchEnd(long InWindowHandle, string InView, int InVisitedCount, int InResultCount, int InSkippedOtherWindows,
+            long InElapsedMs, bool InIsTruncated, bool InIsTimedOut, int InMaxVisited)
+        {
+            DiagnosticHub.EmitCore(DiagnosticLevel.Info, DiagnosticCategory.UIA, "uia.search.end", null, null, InElapsedMs, null, null, InData =>
+            {
+                InData["windowHandle"] = InWindowHandle;
+                InData["view"] = InView;
+                InData["visitedCount"] = InVisitedCount;
+                InData["resultCount"] = InResultCount;
+                InData["skippedOtherWindows"] = InSkippedOtherWindows;
+                InData["truncated"] = InIsTruncated;
+            }, null);
+
+            if (InIsTruncated)
+            {
+                DiagnosticHub.Emit(DiagnosticLevel.Warning, DiagnosticCategory.UIA, "uia.search.truncated", InData =>
+                {
+                    InData["windowHandle"] = InWindowHandle;
+                    InData["visitedCount"] = InVisitedCount;
+                    InData["maxVisited"] = InMaxVisited;
+                    InData["resultCount"] = InResultCount;
+                });
+            }
+            if (InIsTimedOut)
+            {
+                DiagnosticHub.Emit(DiagnosticLevel.Warning, DiagnosticCategory.UIA, "uia.search.timeout", InData =>
+                {
+                    InData["windowHandle"] = InWindowHandle;
+                    InData["visitedCount"] = InVisitedCount;
+                    InData["resultCount"] = InResultCount;
+                    InData["timeoutSeconds"] = UiTools.UiaTimeoutSeconds;
+                });
+            }
+        }
+
+        /// <summary>Extended (Phase 10): ウィンドウ解決の失敗を warning として記録する。</summary>
+        /// <param name="InRequestedHandle">要求された HWND（10 進）。指定が無ければ null。</param>
+        /// <param name="InReason">失敗の区分（missingHandle / handleOutOfRange / validationFailed）。</param>
+        /// <param name="InProcessCount">デバッグ中プロセス数。</param>
+        private static void EmitWindowResolveFailure(long? InRequestedHandle, string InReason, int InProcessCount)
+        {
+            DiagnosticHub.Emit(DiagnosticLevel.Warning, DiagnosticCategory.WINDOW, "window.resolve.failure", InData =>
+            {
+                InData["requestedHandle"] = InRequestedHandle;
+                InData["resolutionReason"] = InReason;
+                InData["debuggedProcessCount"] = InProcessCount;
+            });
         }
     }
 }

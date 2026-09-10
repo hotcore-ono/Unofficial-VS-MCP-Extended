@@ -147,7 +147,8 @@ namespace VsMcp.Extension.Tools
                 "from ('self' = the menu window's own subtree, 'ownerSubtree' = resolved from the owner menu), and in the latter case items[i].rootWindowHandle is the " +
                 "owner menu, not 'handle'. ";
 
-            InRegistry.Register(
+            // Extended (Phase 10): 登録は DiagnosticToolRunner を通し、tool.start / tool.end と相関 ID を付ける（schema・戻り値・エラー文は不変）
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_menu_detect",
                     "[Windows UIA — desktop app being debugged] List the popup menus (context menus) currently open in the debugged processes. Every visible top-level " +
@@ -166,7 +167,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiMenuDetectAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_menu_get_info",
                     "[Windows UIA — desktop app being debugged] Return the structured content of one popup menu of the debugged application by its HWND (from " +
@@ -178,7 +179,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiMenuGetInfoAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_menu_select",
                     "[Windows UIA — desktop app being debugged] Click one item of a popup menu of the debugged application. The item is selected by 'itemId' " +
@@ -211,7 +212,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiMenuSelectAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_menu_capture",
                     "[Windows UIA — desktop app being debugged] Capture a screenshot of one popup menu of the debugged application by its HWND, together with its " +
@@ -223,7 +224,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiMenuCaptureAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_menu_wait",
                     "[Windows UIA — desktop app being debugged] Wait until a popup menu of the debugged application is open. Polls the visible top-level windows and " +
@@ -239,7 +240,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiMenuWaitAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_menu_wait_closed",
                     "[Windows UIA — desktop app being debugged] Wait until the popup menu with the given HWND is closed. Because Windows reuses the HWND of a menu that " +
@@ -255,7 +256,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiMenuWaitClosedAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_menu_close",
                     "[Windows UIA — desktop app being debugged] Close (dismiss) one open popup menu of the debugged application without selecting any item. Do NOT use " +
@@ -285,7 +286,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiMenuCloseAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_menu_select_path",
                     "[Windows UIA — desktop app being debugged] Walk a nested popup menu of the debugged application and invoke the item at the end of 'path' " +
@@ -660,7 +661,8 @@ namespace VsMcp.Extension.Tools
             if (TheRequestedHandle.HasValue && UiWindowTools.IsHandleInRange(TheRequestedHandle.Value) && !IsWindow(new IntPtr(TheRequestedHandle.Value)))
             {
                 // 既に存在しない HWND は試すまでもなく closed（ui_menu_wait_closed と同じ扱い）
-                return BuildCloseResult(true, TheStopwatch, TheRequestedHandle.Value, _CLOSE_METHOD_NONE, _REASON_ALREADY_CLOSED, TheAttempts, null, null, null);
+                return BuildCloseResult(true, TheStopwatch, TheRequestedHandle.Value, _CLOSE_METHOD_NONE, _REASON_ALREADY_CLOSED, TheAttempts, 0,
+                    null, null, null);
             }
 
             ResolvedMenu TheResolved = await ResolveMenuWindowAsync(InAccessor, InArgs);
@@ -694,6 +696,8 @@ namespace VsMcp.Extension.Tools
             object TheClickPoint = null;
             string TheClickTarget = null;
             string TheNote = null;
+            // Extended (Phase 10): 実際に送った ESC の回数を診断へ渡すため、試行のループの外で数える
+            int TheEscapeCount = 0;
 
             try
             {
@@ -724,7 +728,6 @@ namespace VsMcp.Extension.Tools
                         HashSet<uint> TheEscapeProcessIds = TheResolved.ProcessIds;
                         long TheEscapeMenuHandle = TheMenu.Handle;
                         List<object> TheEscapeObservations = new List<object>();
-                        int TheEscapeCount = 0;
                         // 「その ESC が対象ではなく対象の子（サブメニュー）を閉じた」ことが後から分かるように、子の数を毎回控える
                         int TheChildMenuCount = await UiTools.RunUiaWithTimeoutAsync(() => CountChildMenus(TheEscapeProcessIds, TheEscapeMenuHandle));
                         while (true)
@@ -833,8 +836,8 @@ namespace VsMcp.Extension.Tools
                 return McpToolResult.Error($"ui_menu_close failed for menu {TheMenu.Handle}: {TheException.Message}");
             }
 
-            return BuildCloseResult(TheClosedReason != null, TheStopwatch, TheMenu.Handle, TheUsedMethod, TheClosedReason, TheAttempts, TheClickPoint,
-                TheClickTarget, TheNote);
+            return BuildCloseResult(TheClosedReason != null, TheStopwatch, TheMenu.Handle, TheUsedMethod, TheClosedReason, TheAttempts, TheEscapeCount,
+                TheClickPoint, TheClickTarget, TheNote);
         }
 
         /// <summary>
@@ -1341,7 +1344,54 @@ namespace VsMcp.Extension.Tools
                 }
                 TheDetection.Menus.Add(TheMenu);
             }
+
+            // Extended (Phase 10): 走査した候補数・打ち切り・採用件数を診断へ残す（検出結果は変えない）
+            MenuDetection TheResult = TheDetection;
+            DiagnosticHub.Emit(DiagnosticLevel.Info, DiagnosticCategory.MENU, "menu.detect", InData =>
+            {
+                InData["inspectedCount"] = TheResult.InspectedCount;
+                InData["truncated"] = TheResult.IsTruncated;
+                InData["menuCount"] = TheResult.Menus.Count;
+                InData["ownerWindowHandle"] = InOwnerWindowHandle;
+                InData["includeUnknown"] = InIsUnknownIncluded;
+            });
             return TheDetection;
+        }
+
+        /// <summary>Extended (Phase 10): メニュー項目の実行方式と成否を診断へ残す（項目名の本文は includeUiText のときだけ）。</summary>
+        /// <param name="InMenu">対象メニュー。</param>
+        /// <param name="InItem">対象項目。</param>
+        /// <param name="InExecution">実行結果。</param>
+        private static void EmitMenuSelect(UiMenuInfo InMenu, UiMenuItemInfo InItem, MenuExecution InExecution)
+        {
+            bool HasFailed = InExecution.Method == null;
+            DiagnosticHub.Emit(HasFailed ? DiagnosticLevel.Warning : DiagnosticLevel.Info, DiagnosticCategory.MENU, "menu.select", InData =>
+            {
+                InData["menuHandle"] = InMenu.Handle;
+                InData["menuType"] = InMenu.MenuType;
+                InData["method"] = InExecution.Method;
+                InData["itemId"] = InItem.Id;
+                InData["automationId"] = InItem.AutomationId;
+                InData["hasSubmenu"] = InItem.HasSubmenu;
+                InData["cursorMoved"] = InExecution.IsCursorMoved;
+                InData["itemNameLength"] = InItem.Name == null ? 0 : InItem.Name.Length;
+                InData["itemName"] = DiagnosticSanitizer.SanitizeUiText(InItem.Name, DiagnosticHub.Settings);
+                InData["failed"] = HasFailed;
+            });
+        }
+
+        /// <summary>Extended (Phase 10): 展開後のサブメニュー検出の結果を診断へ残す。</summary>
+        /// <param name="InParentMenuHandle">展開元のメニュー HWND。</param>
+        /// <param name="InDetection">検出結果。</param>
+        private static void EmitMenuSubmenu(long InParentMenuHandle, SubmenuDetection InDetection)
+        {
+            DiagnosticHub.Emit(DiagnosticLevel.Info, DiagnosticCategory.MENU, "menu.submenu", InData =>
+            {
+                InData["parentMenuHandle"] = InParentMenuHandle;
+                InData["submenuDetection"] = InDetection.Detection;
+                InData["candidateCount"] = InDetection.Menus.Count;
+                InData["submenuHandle"] = InDetection.Menus.Count > 0 ? (long?)InDetection.Menus[0].Handle : null;
+            });
         }
 
         /// <summary>
@@ -1395,6 +1445,7 @@ namespace VsMcp.Extension.Tools
             TheContext.IsForegroundEnsured = false;
 
             MenuExecution TheExecution = ExecuteMenuItem(TheContext, TheMenu, TheItem, TheElement);
+            EmitMenuSelect(TheMenu, TheItem, TheExecution); // Extended (Phase 10): 実行方式と成否を診断へ残す
             if (TheExecution.Method == null)
             {
                 return McpToolResult.Error(TheExecution.Error);
@@ -1542,6 +1593,17 @@ namespace VsMcp.Extension.Tools
             if (InElement == null)
             {
                 string TheWin32Method = ExecuteMenuItemByWin32Rect(InContext, InMenu, InItem, out string TheWin32Error);
+
+                // Extended (Phase 10): UIA 要素が無く Win32 の矩形クリックへ落ちた経路を warning として残す
+                DiagnosticHub.Emit(DiagnosticLevel.Warning, DiagnosticCategory.MENU, "menu.fallback", InData =>
+                {
+                    InData["kind"] = "win32Rect";
+                    InData["menuHandle"] = InMenu.Handle;
+                    InData["itemId"] = InItem.Id;
+                    InData["selected"] = TheWin32Method != null;
+                    InData["notReached"] = TheWin32Error;
+                });
+                DiagnosticErrorDump.Schedule(DiagnosticScope.Current, null, DiagnosticLevel.Warning, "menu.fallback", InMenu.Handle);
                 return new MenuExecution { Method = TheWin32Method, Error = TheWin32Error };
             }
             if (InItem.HasSubmenu)
@@ -1749,10 +1811,12 @@ namespace VsMcp.Extension.Tools
                 SubmenuDetection TheCandidates = FindSubmenuCandidates(InProcessIds, InMenuHandlesBefore, InParentMenuHandle);
                 if (TheCandidates.Menus.Count > 0)
                 {
+                    EmitMenuSubmenu(InParentMenuHandle, TheCandidates); // Extended (Phase 10)
                     return TheCandidates;
                 }
                 if (TheStopwatch.ElapsedMilliseconds >= InTimeoutMs)
                 {
+                    EmitMenuSubmenu(InParentMenuHandle, TheCandidates); // Extended (Phase 10): 現れなかったことも残す
                     return TheCandidates;
                 }
             }
@@ -2163,13 +2227,41 @@ namespace VsMcp.Extension.Tools
         /// <param name="InMethod">閉じるのに使われた方式（閉じなかった場合は none）。</param>
         /// <param name="InReason">閉鎖の判定根拠。閉じなかった場合は null。</param>
         /// <param name="InAttempts">試した方式の一覧。</param>
+        /// <param name="InEscapeCount">実際に送った ESC の回数。送っていなければ 0。</param>
         /// <param name="InClickPoint">outside click で押した点。押していなければ null。</param>
         /// <param name="InClickTarget">押した対象の種別（titleBar / rootElement）。押していなければ null。</param>
         /// <param name="InNote">補足。無ければ null。</param>
         /// <returns>成功結果。</returns>
         private static McpToolResult BuildCloseResult(bool InIsClosed, Stopwatch InStopwatch, long InHandle, string InMethod, string InReason,
-            List<object> InAttempts, object InClickPoint, string InClickTarget, string InNote)
+            List<object> InAttempts, int InEscapeCount, object InClickPoint, string InClickTarget, string InNote)
         {
+            // Extended (Phase 10): クローズの方式・試行回数・結果を診断へ残す。外側クリックへ落ちた場合は fallback として warning にする
+            bool IsOutsideClick = string.Equals(InMethod, _CLOSE_METHOD_OUTSIDE_CLICK, StringComparison.Ordinal);
+            int TheAttemptCount = InAttempts == null ? 0 : InAttempts.Count;
+            long TheElapsedMs = InStopwatch.ElapsedMilliseconds;
+            DiagnosticHub.EmitCore(IsOutsideClick ? DiagnosticLevel.Warning : DiagnosticLevel.Info, DiagnosticCategory.MENU, "menu.close",
+                null, null, TheElapsedMs, InIsClosed ? "closed" : "notClosed", null, InData =>
+                {
+                    InData["menuHandle"] = InHandle;
+                    InData["method"] = InMethod;
+                    InData["reason"] = InReason;
+                    InData["candidatesTried"] = TheAttemptCount;
+                    InData["escapeCount"] = InEscapeCount;
+                    InData["clickTarget"] = InClickTarget;
+                    InData["note"] = InNote;
+                }, null);
+            if (IsOutsideClick)
+            {
+                DiagnosticHub.Emit(DiagnosticLevel.Warning, DiagnosticCategory.MENU, "menu.fallback", InData =>
+                {
+                    InData["kind"] = _CLOSE_METHOD_OUTSIDE_CLICK;
+                    InData["menuHandle"] = InHandle;
+                    InData["clickTarget"] = InClickTarget;
+                    InData["closed"] = InIsClosed;
+                });
+                DiagnosticErrorDump.Schedule(DiagnosticScope.Current, null, DiagnosticLevel.Warning, "menu.fallback", InHandle);
+            }
+
             return McpToolResult.Success(new
             {
                 closed = InIsClosed,
@@ -2249,6 +2341,7 @@ namespace VsMcp.Extension.Tools
             TheContext.IsForegroundEnsured = false;
 
             MenuExecution TheExecution = ExecuteMenuItem(TheContext, TheMenu, TheItem, TheElement);
+            EmitMenuSelect(TheMenu, TheItem, TheExecution); // Extended (Phase 10): 実行方式と成否を診断へ残す
             if (TheExecution.Method == null)
             {
                 TheStep.Error = TheExecution.Error;
@@ -2291,6 +2384,7 @@ namespace VsMcp.Extension.Tools
                     FindSubmenuCandidates(InProcessIds, InMenuHandlesBefore, InParentMenuHandle));
                 if (TheCandidates.Menus.Count > 0 || TheStopwatch.ElapsedMilliseconds >= InTimeoutMs)
                 {
+                    EmitMenuSubmenu(InParentMenuHandle, TheCandidates); // Extended (Phase 10)
                     return TheCandidates;
                 }
             }
