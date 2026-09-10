@@ -13,9 +13,10 @@ UI 自動化の失敗はその場のスクリーンショットだけでは再�
 | `Config\diagnostics.json.invalid-<yyyyMMdd-HHmmss>` | JSON が壊れていた設定の退避先 |
 | `Logs\<yyyy-MM-dd>\session-<yyyyMMdd-HHmmss>-<sessionId>.jsonl` | セッションごとのイベントログ |
 | `Logs\<yyyy-MM-dd>\...-part-NNN.jsonl` | ローテーション後の続きファイル（2 個目以降） |
-| `Diagnostics\dumps\` | `errorDetailDump` 用に起動時へ作るフォルダー（`DiagnosticHub.cs:318`）。ダンプ本文は JSONL の `diagnostics.errorDump` に載るため、現状このフォルダーへはファイルを書かない |
 | `Diagnostics\screenshots\` | `captureScreenshotOnError=true` のときのエラー時スクリーンショット |
 | `Exports\diagnostics-<yyyyMMdd-HHmmss>-<exportId>.zip` | `diagnostics_export` の出力 |
+
+`Diagnostics\dumps\` は Phase 12 で自動作成をやめた（ダンプ本文は JSONL の `diagnostics.errorDump` に載るため、ファイルは書かない）。
 
 セッション ID は `s-<yyyyMMddHHmmss>-<GUID 先頭 8 桁>`、相関 ID は `c-<GUID 先頭 8 桁>`。
 JSONL は 1 行 1 イベント（UTF-8 BOM なし）で、`FileShare.ReadWrite` で開いているため
@@ -161,6 +162,22 @@ writer 障害（`diagnostics.writer.failure`）は JSONL に残らない。write
 | 設定を変えたのに効かない | `Config\diagnostics.json.invalid-*` の有無と `diagnostics.config.invalid`（`data.reason=parse`）。壊れた設定は退避され既定値で再生成される |
 | ログが増えすぎる | `level` が `trace` のままになっていないか。`diagnostics_set_level` で `info` に戻す |
 | 外部スクリプトから読むと途中まで | `diagnostics_flush` を呼んでから読む |
+
+## 閉鎖待ちの `reason`
+
+`*_wait_closed` と `ui_menu_close` が返す `reason` の一覧（意味は各ツールの description のとおり）。
+`closed=true` の根拠がどれなのかで、次に取るべき手が変わる。
+
+| `reason` | 意味 | 返すツール |
+|---|---|---|
+| `alreadyClosed` | 呼び出した時点で既に無効な HWND だった（待たずに `closed=true` を返す） | `ui_wait_for_window_closed` / `standard_dialog_wait_closed` / `standard_file_dialog_wait_closed` / `ui_menu_wait_closed` / `ui_menu_close` |
+| `windowDestroyed` | HWND がもう存在しない（本来の閉鎖） | 同上 |
+| `handleReused` | 同じ HWND 値が別プロセスに再利用された（別の窓を掴んでいる） | 同上 |
+| `hidden` | ウィンドウは残っているが表示されなくなった | `ui_menu_wait_closed` / `ui_menu_close` |
+| `contentChanged` | 同じ HWND のまま内容が別のメニューになった（メニューでなくなった場合を含む） | `ui_menu_wait_closed` / `ui_menu_close` |
+| `noMatchingWindow` | `title` 指定のとき、条件に一致する可視ウィンドウが 1 つも無くなった（同名の窓が作り直される可能性があるため `handle` 指定より緩い） | `ui_wait_for_window_closed`（`title` 指定時のみ） |
+| `debuggingStopped` | デバッグが終了して対象プロセスが無くなった（窓の閉鎖を確認したわけではない） | `ui_wait_for_window_closed`（`title` 指定時のみ） |
+| `null` | 時間切れ。`closed=false` とともに返る（`ui_menu_close` は閉じられなかったメニューを error ではなく `closed=false` で返す） | すべて |
 
 ## 関連
 
