@@ -40,6 +40,9 @@
     <Reference Include="UIAutomationClient" />
     <Reference Include="UIAutomationTypes" />
     <Reference Include="System.Drawing" />
+    <!-- Extended (Phase 10): diagnostics_export の ZIP 生成（ZipArchive / ZipFile） -->
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Net.Http" />
     <Reference Include="System.Xml.Linq" />
   </ItemGroup>
