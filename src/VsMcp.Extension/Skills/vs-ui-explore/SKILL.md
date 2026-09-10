@@ -5,7 +5,7 @@ description: Operate the UI of a Visual Studio debuggee with the Extended vs-mcp
 
 # vs-ui-explore
 
-Revision: Phase 11
+Revision: Phase 11 (+Phase 12 notes)
 
 ## Purpose
 
@@ -287,6 +287,10 @@ Do not repeat the same action immediately after it failed:
 6. Fix the selector / target
 7. Retry
 ```
+
+Read the human-readable reason in the error text first; the embedded JSON (candidate
+lists, counts) is structured supplementary data, not the primary message. The `reason`
+values returned by `*_wait_closed` are listed in `docs/extended/11-DIAGNOSTICS.md`.
 
 ## Autonomous crawl mode
 
