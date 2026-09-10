@@ -5,7 +5,7 @@ description: Operate the UI of a Visual Studio debuggee with the Extended vs-mcp
 
 # vs-ui-explore
 
-Revision: Phase 11 (+Phase 12 notes)
+Revision: Phase 11 (+Phase 12/13 notes)
 
 ## Purpose
 
@@ -113,6 +113,10 @@ ui_window_wait_idle + state verification
 `ui_window_get_info` also returns geometry (DPI, monitor, bounds in physical
 pixels) — use those values instead of assuming 96 DPI.
 
+TabItem / ListItem have no Invoke pattern; `ui_window_click` selects them through
+SelectionItemPattern and only then falls back to a physical click. Verify the
+selection state (`ui_window_snapshot` / `ui_window_find_elements`) after the click.
+
 ## Standard Dialog
 
 ```text
@@ -206,6 +210,12 @@ ui_menu_wait / ui_menu_wait_closed
 ui_window_wait_idle          (mode: single / active / all)
 ```
 
+Argument names differ by tool family: `ui_wait_for_window` /
+`ui_wait_for_window_closed` / `ui_capture_window_by_handle` / `ui_menu_*` /
+`standard_dialog_*` / `standard_file_dialog_*` take `handle` (or `title`),
+while every `ui_window_*` tool takes `windowHandle`. Read the tool's schema
+before the first call instead of guessing from a sibling tool.
+
 Capture with the dedicated tool for that kind of window:
 
 ```text
@@ -239,6 +249,13 @@ RawView last
 `truncated=true` in the response means the walk was stopped by `maxVisited` or
 by the timeout, so the result list is incomplete — narrow it and search again
 instead of concluding the element does not exist.
+
+For concurrent UIA reads, prefer 8 or fewer simultaneous searches. Avoid
+32-way UIA search concurrency; 16 worked in stress testing but should not be
+treated as a guaranteed limit. Sequential is the default. UI Automation is
+serialized inside the target process, so concurrency turns into queueing:
+in stress testing 8 and 16 parallel searches completed, while 32 pushed
+about 20% of them past the 30-second UIA timeout.
 
 ## Diagnostics
 
