@@ -378,6 +378,12 @@ namespace VsMcp.Extension.Tools
                 return;
             }
 
+            // Extended (Phase 12): DEBUG 限定の遅延注入。JSONL を 1 件書く直前。Shutdown 中は遅延しない
+            if (DiagnosticTestHooks.WriterDelayMs > 0 && !_Queue.IsAddingCompleted)
+            {
+                Thread.Sleep(DiagnosticTestHooks.WriterDelayMs);
+            }
+
             long ThePending = Interlocked.Exchange(ref _PendingDroppedCount, 0);
             if (ThePending > 0)
             {

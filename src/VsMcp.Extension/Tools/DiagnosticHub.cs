@@ -309,13 +309,13 @@ namespace VsMcp.Extension.Tools
             });
         }
 
-        /// <summary>ログ・ダンプ・エクスポート・設定の各フォルダーを作る。失敗は握り潰す。</summary>
+        /// <summary>ログ・スクリーンショット・エクスポート・設定の各フォルダーを作る。失敗は握り潰す。</summary>
         private static void EnsureFolders()
         {
             try
             {
+                // Extended (Phase 12): Diagnostics\dumps は作らない（ダンプ本文は JSONL の diagnostics.errorDump に載る）
                 Directory.CreateDirectory(DiagnosticWriter.LogFolderPath);
-                Directory.CreateDirectory(DiagnosticSettings.GetFolder(Path.Combine("Diagnostics", "dumps")));
                 Directory.CreateDirectory(DiagnosticSettings.GetFolder(Path.Combine("Diagnostics", "screenshots")));
                 Directory.CreateDirectory(DiagnosticSettings.GetFolder("Exports"));
                 Directory.CreateDirectory(DiagnosticSettings.GetFolder("Config"));
@@ -343,6 +343,15 @@ namespace VsMcp.Extension.Tools
             InOutData["writeOutputPane"] = Settings.IsOutputPaneWritten;
             InOutData["includeUiText"] = Settings.IsUiTextIncluded;
             InOutData["includeFilePaths"] = Settings.IsFilePathsIncluded;
+            // Extended (Phase 12): DEBUG 限定の fault injection が有効なときだけ内容を残す（Release ではキー自体が出ない）
+            if (DiagnosticTestHooks.IsActive)
+            {
+                InOutData["testHooks"] = new JObject
+                {
+                    ["writerDelayMs"] = DiagnosticTestHooks.WriterDelayMs,
+                    ["paneFailCount"] = DiagnosticTestHooks.PaneFailCount
+                };
+            }
         }
 
         /// <summary>拡張機能のバージョン（アセンブリの情報バージョン）を返す。</summary>

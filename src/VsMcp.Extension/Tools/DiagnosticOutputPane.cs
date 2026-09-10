@@ -310,6 +310,11 @@ namespace VsMcp.Extension.Tools
                     }
                 }
                 // pane は Activate しない（ユーザーの作業中の Output pane を奪わないため）
+                // Extended (Phase 12): DEBUG 限定の失敗注入（Release では常に false のため JIT で消える）
+                if (DiagnosticTestHooks.TryConsumePaneFailure())
+                {
+                    throw new InvalidOperationException("test-only pane failure");
+                }
                 _Pane.OutputString(InText);
                 CountSuccess();
             }
