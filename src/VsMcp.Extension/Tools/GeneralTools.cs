@@ -94,6 +94,11 @@ namespace VsMcp.Extension.Tools
             { "parallel_tasks_list", "Parallel" },
             // Diagnostics
             { "diagnostics_binding_errors", "Diagnostics" },
+            { "diagnostics_get_status", "Diagnostics" }, // Extended
+            { "diagnostics_set_level", "Diagnostics" }, // Extended
+            { "diagnostics_mark", "Diagnostics" }, // Extended
+            { "diagnostics_export", "Diagnostics" }, // Extended
+            { "diagnostics_flush", "Diagnostics" }, // Extended
             // Output
             { "output_write", "Output" },
             { "output_read", "Output" },
