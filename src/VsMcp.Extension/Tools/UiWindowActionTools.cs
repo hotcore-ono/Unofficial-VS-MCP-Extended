@@ -61,7 +61,9 @@ namespace VsMcp.Extension.Tools
                     "ui_window_click",
                     "[Windows UIA — desktop app being debugged] Click a UI element inside ANY top-level window of the debugged application identified by its HWND " +
                     "(modal dialog, owned window, main window). " + TheSelectorDescription +
-                    "Execution order is the same as ui_click: UIA InvokePattern first (no cursor movement), then a physical click at the element center, which is " +
+                    "Execution order is the same as ui_click: UIA InvokePattern first (no cursor movement), " +
+                    "then SelectionItemPattern.Select for selectable items such as TabItem / ListItem (no cursor movement; reports method 'selectionItemPattern' " +
+                    "with 'alreadySelected' and 'verified' after reading the selection state back), then a physical click at the element center, which is " +
                     "performed only if the point lies inside the target window's rectangle and is not covered by another window. " + TheSafetyDescription +
                     "For MessageBox / TaskDialog / file dialog buttons prefer standard_dialog_execute / standard_file_dialog_*. " +
                     "For a popup / context menu item prefer ui_menu_select; for keyboard input prefer ui_window_send_keys.",
@@ -227,10 +229,14 @@ namespace VsMcp.Extension.Tools
             return TheWaitMs > 0 ? Task.Delay(Math.Min(TheWaitMs, _MAX_WAIT_MS)) : Task.CompletedTask;
         }
 
-        /// <summary>ui_window_click の本体。InvokePattern → 物理クリック（座標ゲート付き）の順。</summary>
+        /// <summary>
+        /// ui_window_click の本体。InvokePattern → SelectionItemPattern → 物理クリック（座標ゲート付き）の順。
+        /// Extended: Invoke を持たない選択項目（TabItem / ListItem など）は物理クリックの前に SelectionItemPattern で選ぶ
+        /// （物理クリックはヒットテストの都合で「成功したのに選択が変わらない」ことがあるため）。
+        /// </summary>
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         /// <param name="InArgs">ツール引数。</param>
-        /// <returns>text（message / method / window / element / clickX / clickY）、またはエラー。</returns>
+        /// <returns>text（message / method / window / element / clickX / clickY、SelectionItemPattern のときは alreadySelected / verified）、またはエラー。</returns>
         private static async Task<McpToolResult> UiWindowClickAsync(VsServiceAccessor InAccessor, JObject InArgs)
         {
             (IntPtr TheWindow, HashSet<uint> TheProcessIds, McpToolResult TheError) = await UiWindowUiaTools.ResolveWindowWithProcessesAsync(InAccessor, InArgs);
@@ -269,6 +275,13 @@ namespace VsMcp.Extension.Tools
                             window = DescribeWindow(TheWindowInfo),
                             element = TheElement.Info,
                         });
+                    }
+
+                    // Extended: Invoke を持たない選択項目は物理クリックより先に SelectionItemPattern で選ぶ（カーソルを動かさない）
+                    McpToolResult TheSelectionResult = TrySelectElementWithSelectionItemPattern(TheElement, TheSelector, TheWindowInfo);
+                    if (TheSelectionResult != null)
+                    {
+                        return TheSelectionResult;
                     }
 
                     string TheBoundsError = UiInteractionContext.DescribePhysicalPrerequisite(TheElement, TheSelector);
@@ -311,6 +324,57 @@ namespace VsMcp.Extension.Tools
                 await DelayAfterActionAsync(InArgs);
             }
             return TheResult;
+        }
+
+        /// <summary>
+        /// Extended: Invoke を持たない選択項目（TabItem / ListItem など）を SelectionItemPattern.Select で選ぶ。
+        /// 既に選択済みなら Select を呼ばずに成功扱いとし（alreadySelected = true）、Select したときは IsSelected を読み直して
+        /// 選択が切り替わったことを確認する（verified = true）。パターン非対応・例外・選択状態が変わらない場合は null を返し、
+        /// 呼び出し元は従来どおり物理クリックへ落ちる。
+        /// </summary>
+        /// <param name="InElement">解決済みの要素（安全境界の確認後）。</param>
+        /// <param name="InSelector">要素セレクター（メッセージ用）。</param>
+        /// <param name="InWindowInfo">対象ウィンドウの情報（メッセージ・戻り値用）。</param>
+        /// <returns>選択できた場合の成功結果。物理クリックへ落ちる場合は null。</returns>
+        private static McpToolResult TrySelectElementWithSelectionItemPattern(UiWindowResolvedElement InElement, UiWindowElementSelector InSelector,
+            WindowInfo InWindowInfo)
+        {
+            bool IsAlreadySelected;
+            try
+            {
+                if (!InElement.Element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out object ThePattern))
+                {
+                    return null;
+                }
+                SelectionItemPattern TheSelectionItem = (SelectionItemPattern)ThePattern;
+                IsAlreadySelected = TheSelectionItem.Current.IsSelected;
+                if (!IsAlreadySelected)
+                {
+                    TheSelectionItem.Select();
+                    if (!TheSelectionItem.Current.IsSelected)
+                    {
+                        // 選択が切り替わらなかった場合は物理クリックへ落ちる
+                        return null;
+                    }
+                }
+            }
+            catch
+            {
+                // パターンが使えない・要素が消えた・Select が拒否された場合は物理クリックへ落ちる
+                return null;
+            }
+
+            return McpToolResult.Success(new
+            {
+                message = IsAlreadySelected
+                    ? $"Element with {InSelector.Describe()} in window {InWindowInfo.Handle} was already selected (SelectionItemPattern)"
+                    : $"Selected element with {InSelector.Describe()} in window {InWindowInfo.Handle} using SelectionItemPattern",
+                method = "selectionItemPattern",
+                window = DescribeWindow(InWindowInfo),
+                element = InElement.Info,
+                alreadySelected = IsAlreadySelected,
+                verified = true,
+            });
         }
 
         /// <summary>ui_window_double_click の本体。物理ダブルクリック（upstream PerformDoubleClick）のみ。</summary>
