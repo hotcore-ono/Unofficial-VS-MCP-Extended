@@ -56,7 +56,8 @@ namespace VsMcp.Extension.Tools
                     "menu is refused: to dismiss an open popup or context menu use ui_menu_close instead — a menu has no foreground window of its own and bringing " +
                     "another window to the front dismisses it in an uncontrolled way. The keys are injected with SendInput and the call fails when Windows did not " +
                     "accept every event. Returns text { sent, windowHandle, keys, text, mode, foregroundBefore, foregroundAfter, changedForeground, insertedEvents " +
-                    "(number of key events actually injected), geometry (re-read after the window was brought to the front) }.",
+                    "(number of key events actually injected), geometry (re-read after the window was brought to the front) }. " +
+                    "Prefer this over the upstream ui_send_keys for x64 UI automation: ui_send_keys injects nothing there (SendInput reports inserted=0).",
                     SchemaBuilder.Create()
                         .AddInteger("windowHandle", "HWND of the window that receives the keystrokes (decimal)", required: true)
                         .AddString("keys", "Key sequence to send, space-separated (e.g. 'escape', 'ctrl+s', 'tab tab enter'); same syntax as ui_send_keys", required: true)

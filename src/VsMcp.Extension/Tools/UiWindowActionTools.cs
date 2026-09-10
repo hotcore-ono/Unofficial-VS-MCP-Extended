@@ -63,7 +63,8 @@ namespace VsMcp.Extension.Tools
                     "(modal dialog, owned window, main window). " + TheSelectorDescription +
                     "Execution order is the same as ui_click: UIA InvokePattern first (no cursor movement), then a physical click at the element center, which is " +
                     "performed only if the point lies inside the target window's rectangle and is not covered by another window. " + TheSafetyDescription +
-                    "For MessageBox / TaskDialog / file dialog buttons prefer standard_dialog_execute / standard_file_dialog_*.",
+                    "For MessageBox / TaskDialog / file dialog buttons prefer standard_dialog_execute / standard_file_dialog_*. " +
+                    "For a popup / context menu item prefer ui_menu_select; for keyboard input prefer ui_window_send_keys.",
                     SchemaBuilder.Create()
                         .AddInteger("windowHandle", "HWND of the window that contains the element (decimal)", required: true)
                         .AddString("automationId", "AutomationId of the element (exact)")

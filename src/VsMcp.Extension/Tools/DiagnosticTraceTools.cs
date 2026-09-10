@@ -44,7 +44,8 @@ namespace VsMcp.Extension.Tools
                     "current session id, the JSONL file being written, the log / config locations, the pending queue length, the number of dropped events, whether " +
                     "the writer is still healthy, and the effective limits (retentionDays, maxFileSizeMb, maxSessionFiles, maxStringLength). Nothing is captured " +
                     "from the debugged application, so this tool is safe to call at any time. Returns text { enabled, level, sessionId, currentLogFile, " +
-                    "logDirectory, configFile, queueLength, droppedEventCount, writerHealthy, ... }.",
+                    "logDirectory, configFile, queueLength, droppedEventCount, writerHealthy, ... }. " +
+                    "Call it before diagnostics_export: writerHealthy=false means the JSONL may be missing, so an empty export is not proof that nothing happened.",
                     SchemaBuilder.Empty()),
                 InArgs => DiagnosticsGetStatusAsync(InArgs));
 
@@ -54,7 +55,8 @@ namespace VsMcp.Extension.Tools
                     "[Extended diagnostics] Change how much the Extended diagnostic trace infrastructure records: 'off' disables it completely (the tool wrappers " +
                     "then add no work at all), 'error' / 'warning' / 'info' (default) / 'verbose' / 'trace'. 'trace' logs every poll iteration and every visited UI " +
                     "Automation element, so use it only while reproducing a problem. The change applies immediately to the running Visual Studio; pass persist=true " +
-                    "to also write it to the diagnostics.json configuration file so it survives a restart. Returns text { previousLevel, level, persisted, configFile }.",
+                    "to also write it to the diagnostics.json configuration file so it survives a restart. Returns text { previousLevel, level, persisted, configFile }. " +
+                    "Return to 'info' after the reproduction; do not leave 'trace' on during normal work.",
                     SchemaBuilder.Create()
                         .AddEnum("level", "New log level: off, error, warning, info, verbose, trace",
                             new[] { "off", "error", "warning", "info", "verbose", "trace" }, required: true)
@@ -65,8 +67,9 @@ namespace VsMcp.Extension.Tools
             DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "diagnostics_mark",
-                    "[Extended diagnostics] Put a named marker into the diagnostic log to say 'the problem happened here'. Call it right after reproducing a " +
-                    "problem, then pass the returned correlationId (or the surrounding minutes) to diagnostics_export. The message is sanitized and truncated to " +
+                    "[Extended diagnostics] Put a named marker into the diagnostic log to say 'the problem happened here'. Call it right before and right after " +
+                    "reproducing a problem, then export the session with diagnostics_export (sessionId): the marker has a correlationId of its own, so exporting " +
+                    "by that id returns only the marker, while the markers' timestamps locate the failure in events.jsonl. The message is sanitized and truncated to " +
                     "500 characters — never put passwords, tokens or file contents in it. Returns text { markerId, timestampUtc, sessionId, correlationId, " +
                     "sequence, recorded }; recorded=false means diagnostics are currently off, so nothing was written.",
                     SchemaBuilder.Create()
@@ -82,7 +85,9 @@ namespace VsMcp.Extension.Tools
                     "'correlationId' to export every event of one tool call. The archive contains manifest.json, events.jsonl, environment.json and README.txt " +
                     "(plus screenshots\\ when includeScreenshots=true and screenshots were captured). User name, machine name and repository paths are not " +
                     "included. Lines that are not valid JSON (a log file truncated by a crash) are skipped and counted. Returns text { exportId, zipPath, " +
-                    "eventCount, errorCount, warningCount, startUtc, endUtc, sessionIds, includedScreenshots, skippedLines, bytes }.",
+                    "eventCount, errorCount, warningCount, startUtc, endUtc, sessionIds, includedScreenshots, skippedLines, bytes }. " +
+                    "Prefer 'sessionId' (the whole session, with your diagnostics_mark markers), then 'minutes' for a long session; use 'correlationId' only " +
+                    "for one tool call whose id you already know from an earlier export — the failing tool's correlationId is not part of its error text.",
                     SchemaBuilder.Create()
                         .AddInteger("minutes", "How many minutes back to export (default: 30, 1-43200); ignored when sessionId or correlationId is given")
                         .AddString("sessionId", "Export every event of this session id (from diagnostics_get_status)")
