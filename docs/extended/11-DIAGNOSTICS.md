@@ -71,7 +71,7 @@ Visual Studio の実行中でも外部から読める。
 | category | event | 主なデータ |
 |---|---|---|
 | session | `session.start` / `session.end` | 環境要約（ユーザー名・PC 名・パスは含まない） |
-| tool | `tool.start` / `tool.end` | 引数要約、`result`（success / error / normalFalse / timeout）、`elapsedMs` |
+| tool | `tool.start` / `tool.end` | 引数要約、`result`（success / error / normalFalse / timeout / cancelled）、`elapsedMs` |
 | window | `window.resolve.start` / `.success` / `.failure` | requestedHandle / normalizedHandle / pid / className / isModalCandidate / resolutionReason |
 | modal | `modal.evaluate` / `modal.block`(warning) | targetHandle / isBlocked / blockingHandle / reason |
 | geometry | `geometry.resolve`(verbose) | handle / dpi / monitorName / bounds |
@@ -178,6 +178,38 @@ writer 障害（`diagnostics.writer.failure`）は JSONL に残らない。write
 | `noMatchingWindow` | `title` 指定のとき、条件に一致する可視ウィンドウが 1 つも無くなった（同名の窓が作り直される可能性があるため `handle` 指定より緩い） | `ui_wait_for_window_closed`（`title` 指定時のみ） |
 | `debuggingStopped` | デバッグが終了して対象プロセスが無くなった（窓の閉鎖を確認したわけではない） | `ui_wait_for_window_closed`（`title` 指定時のみ） |
 | `null` | 時間切れ。`closed=false` とともに返る（`ui_menu_close` は閉じられなかったメニューを error ではなく `closed=false` で返す） | すべて |
+
+## 解析器
+
+`tools\Analyze-Diagnostics.ps1`（PowerShell 7）は export ZIP か `events.jsonl` をローカルだけで解析する
+（ネットワークアクセスなし。ログに sanitize 済みで載っている値しか使わず、伏字やパスの復元はしない）。
+
+```powershell
+pwsh -NoProfile -File tools\Analyze-Diagnostics.ps1 -InputPath "<export>.zip" [-OutputDirectory <dir>] [-SlowFactor 3.0] [-MaxSuspects 50] [-IncludePaths]
+```
+
+出力先（既定は入力と同じ場所の `analysis-<yyyyMMdd-HHmmss>\`）へ次の 3 ファイルを書く。
+ZIP を渡した場合は出力先に `extracted\`（ZIP を展開したもの）も残る。不要なら手で消す。
+出力そのものを添付する前提なので、**出力先はリポジトリ外**（例: `%TEMP%` 配下）を推奨する。
+
+- `analysis-summary.json` — セッション / event・error・warning・dropped 件数 / Tool 別統計（calls・result 内訳・p50・p95・max）/ slow operations / fallback・warning 集計 / マーカーと区間 / suspect correlation
+- `analysis-summary.md` — 同じ数値を表にした要約
+- `suspects.jsonl` — suspect の correlationId の元ログ行（原文のまま。各 suspect の先頭に `_suspect` の 1 行）
+
+`analysis-summary.json` / `.md` に載る入力の場所は既定でファイル名だけである（`-IncludePaths` を付けたときだけフルパスを載せる。
+実行ログにはどちらでもフルパスを出す）。json の `input.malformedFieldCount` は「JSON としては読めたが `sequence` /
+`elapsedMs` / `droppedEventCount` が数値でなかった」件数で、`skippedLineCount`（行ごと読めなかった数）とは別に数える。
+manifest がある入力では `input.manifestMatches` に eventCount / errorCount / warningCount / skippedLines の照合結果が出る。
+
+`suspects.jsonl` に載る元ログ行は `tool.*` / `window.*` / `modal.*` / `menu.*` / `uia.*` / `input.*` / `wait.*` /
+`capture.*` / `interaction.*` / `geometry.*` / `dialog.*` / `fileDialog.*` / `exception*` / `diagnostics.errorDump` だけで、
+それ以外（`diagnostics.mark` / `.export` などの診断基盤自身の event と `performance.tool`）は入らない。
+`-MaxSuspects` で切られた件数は json の `suspectsTruncated` と md の脚注に出る（`suspectsWritten` が実際に書いた件数）。
+
+suspect は `tool.end` が error / timeout、`error` 水準の event（`exception` など）や `diagnostics.errorDump` あり、
+warning や `menu.fallback` / `interaction.fallback` を伴う、または遅い呼び出し。
+slow は「そのツールの**成功呼び出しの** p50 × `-SlowFactor` を超え、かつ 1,000 ms 以上」（成功が 2 件未満のツールは判定しない。統計の `p50Success` がその基準値）。
+`diagnostics_mark` を 2 個以上打っていれば、マーカー区間ごとの error / warning と失敗した `tool.end` も出る。
 
 ## 関連
 
