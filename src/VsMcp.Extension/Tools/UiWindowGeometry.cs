@@ -64,6 +64,18 @@ namespace VsMcp.Extension.Tools
 
             IntPtr TheMonitor = MonitorFromWindow(InWindow, MONITOR_DEFAULTTONEAREST);
             FillMonitorInfo(TheMonitor, TheGeometry);
+
+            // Extended (Phase 10): 取得した値をそのまま診断へ残す（戻り値は変えない）
+            DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.GEOMETRY, "geometry.resolve", InData =>
+            {
+                InData["handle"] = TheGeometry.WindowHandle;
+                InData["dpi"] = TheGeometry.Dpi;
+                InData["monitorName"] = TheGeometry.MonitorName;
+                InData["windowBounds"] = TheGeometry.WindowBoundsPhysical;
+                InData["monitorBounds"] = TheGeometry.MonitorBounds;
+                InData["monitorWorkArea"] = TheGeometry.MonitorWorkArea;
+                InData["isPrimary"] = TheGeometry.IsPrimaryMonitor;
+            });
             return TheGeometry;
         }
 

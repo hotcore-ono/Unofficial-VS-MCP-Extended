@@ -257,14 +257,46 @@ namespace VsMcp.Extension.Tools
                 return 0;
             }
             INPUT_EX[] TheInputArray = InInputs.ToArray();
+            // Extended (Phase 10): 注入の前後でフォアグラウンドを観測し、実際に入った件数と併せて診断へ残す（キー本文は出さない）
+            long TheForegroundBefore = GetForegroundWindow().ToInt64();
             uint TheInsertedEvents = SendInputEx((uint)TheInputArray.Length, TheInputArray, Marshal.SizeOf(typeof(INPUT_EX)));
             if (TheInsertedEvents < (uint)TheInputArray.Length)
             {
                 int TheWin32Error = Marshal.GetLastWin32Error();
+                EmitKeyboardInput(TheInputArray.Length, (int)TheInsertedEvents, TheWin32Error, TheForegroundBefore);
                 throw new InvalidOperationException(
                     $"SendInput inserted {TheInsertedEvents} of {TheInputArray.Length} events (win32 error {TheWin32Error})");
             }
+            EmitKeyboardInput(TheInputArray.Length, (int)TheInsertedEvents, 0, TheForegroundBefore);
             return (int)TheInsertedEvents;
+        }
+
+        /// <summary>
+        /// Extended (Phase 10): SendInput の結果を診断へ残す。キー・文字の本文は出さず、件数・Win32 エラー・
+        /// フォアグラウンドの変化だけを記録する。注入できなかった場合は error 水準にする。
+        /// </summary>
+        /// <param name="InRequestedEventCount">送ろうとしたイベント数。</param>
+        /// <param name="InInsertedEventCount">実際に注入されたイベント数。</param>
+        /// <param name="InWin32Error">失敗時の Win32 エラーコード。成功時は 0。</param>
+        /// <param name="InForegroundBefore">注入前のフォアグラウンド HWND（10 進）。</param>
+        private static void EmitKeyboardInput(int InRequestedEventCount, int InInsertedEventCount, int InWin32Error, long InForegroundBefore)
+        {
+            bool HasFailed = InWin32Error != 0 || InInsertedEventCount < InRequestedEventCount;
+            if (!DiagnosticHub.IsEnabled(HasFailed ? DiagnosticLevel.Error : DiagnosticLevel.Verbose))
+            {
+                return;
+            }
+            long TheForegroundAfter = GetForegroundWindow().ToInt64();
+            DiagnosticHub.Emit(HasFailed ? DiagnosticLevel.Error : DiagnosticLevel.Verbose,
+                DiagnosticCategory.INPUT, "input.keyboard", InData =>
+                {
+                    InData["requestedEventCount"] = InRequestedEventCount;
+                    InData["insertedEventCount"] = InInsertedEventCount;
+                    InData["win32Error"] = InWin32Error;
+                    InData["foregroundBefore"] = InForegroundBefore;
+                    InData["foregroundAfter"] = TheForegroundAfter;
+                    InData["changedForeground"] = TheForegroundAfter != InForegroundBefore;
+                });
         }
     }
 }

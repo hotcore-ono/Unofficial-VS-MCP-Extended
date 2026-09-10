@@ -40,7 +40,8 @@ namespace VsMcp.Extension.Tools
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         public static void Register(McpToolRegistry InRegistry, VsServiceAccessor InAccessor)
         {
-            InRegistry.Register(
+            // Extended (Phase 10): 登録は DiagnosticToolRunner を通し、tool.start / tool.end と相関 ID を付ける（schema・戻り値・エラー文は不変）
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_send_keys",
                     "[Windows UIA — desktop app being debugged] Send keystrokes to ONE top-level window of the debugged application identified by its HWND (modal dialog, " +

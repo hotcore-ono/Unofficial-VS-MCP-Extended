@@ -55,7 +55,8 @@ namespace VsMcp.Extension.Tools
                 "NativeWindowHandle=0), the window must belong to a debugged process, and the window must not be disabled by a modal dialog — an owner window blocked " +
                 "by an owned or ownerless modal dialog is refused with the blocking window in the error, even though UIA InvokePattern could technically fire. ";
 
-            InRegistry.Register(
+            // Extended (Phase 10): 登録は DiagnosticToolRunner を通し、tool.start / tool.end と相関 ID を付ける（schema・戻り値・エラー文は不変）
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_click",
                     "[Windows UIA — desktop app being debugged] Click a UI element inside ANY top-level window of the debugged application identified by its HWND " +
@@ -76,7 +77,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiWindowClickAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_double_click",
                     "[Windows UIA — desktop app being debugged] Double-click a UI element inside ANY top-level window of the debugged application identified by its HWND. " +
@@ -95,7 +96,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiWindowDoubleClickAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_right_click",
                     "[Windows UIA — desktop app being debugged] Right-click a UI element inside ANY top-level window of the debugged application identified by its HWND, " +
@@ -123,7 +124,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiWindowRightClickAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_drag",
                     "[Windows UIA — desktop app being debugged] Drag from one UI element to another inside ONE top-level window of the debugged application identified by " +
@@ -151,7 +152,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => UiWindowDragAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_mouse_wheel",
                     "[Windows UIA — desktop app being debugged] Scroll the mouse wheel over a UI element (selected like ui_window_click) or over screen coordinates 'x'/'y' " +
@@ -283,7 +284,7 @@ namespace VsMcp.Extension.Tools
                         return McpToolResult.Error(ThePointError);
                     }
 
-                    UiTools.WithBlockedInput(IsInputBlocked, () => UiTools.PerformClick(TheClickX, TheClickY, IsCursorRestored));
+                    PerformMouseInput("click", TheClickX, TheClickY, IsInputBlocked, () => UiTools.PerformClick(TheClickX, TheClickY, IsCursorRestored));
                     return McpToolResult.Success(new
                     {
                         message = $"Clicked element with {TheSelector.Describe()} in window {TheWindowInfo.Handle} at ({TheClickX}, {TheClickY})",
@@ -404,7 +405,7 @@ namespace VsMcp.Extension.Tools
                     POINT TheSavedCursor = new POINT();
                     bool HasSavedCursor = IsRestoredAfterObservation && TheContext.TrySaveCursor(out TheSavedCursor);
 
-                    UiTools.WithBlockedInput(IsInputBlocked, () => InPerform(TheX, TheY, IsCursorRestored && !IsRestoredAfterObservation));
+                    PerformMouseInput(InMethodName, TheX, TheY, IsInputBlocked, () => InPerform(TheX, TheY, IsCursorRestored && !IsRestoredAfterObservation));
 
                     List<object> TheNewWindows = null;
                     List<object> ThePopupWindows = null;
@@ -622,7 +623,7 @@ namespace VsMcp.Extension.Tools
                         return McpToolResult.Error(TheEndError);
                     }
 
-                    UiTools.WithBlockedInput(IsInputBlocked, () => UiTools.PerformDrag(TheStartX, TheStartY, TheEndX, TheEndY, TheSteps, TheDelayMs, IsCursorRestored));
+                    PerformMouseInput("drag", TheStartX, TheStartY, IsInputBlocked, () => UiTools.PerformDrag(TheStartX, TheStartY, TheEndX, TheEndY, TheSteps, TheDelayMs, IsCursorRestored));
                     return McpToolResult.Success(new
                     {
                         message = $"Dragged from element with {TheSourceSelector.Describe()} ({TheStartX}, {TheStartY}) to element with {TheTargetSelector.Describe()} ({TheEndX}, {TheEndY}) in window {TheWindowInfo.Handle}",
@@ -974,7 +975,7 @@ namespace VsMcp.Extension.Tools
                     {
                         return McpToolResult.Error(ThePointError);
                     }
-                    UiTools.WithBlockedInput(IsInputBlocked, () => UiTools.PerformWheel(TheX, TheY, TheClicks.Value, IsHorizontal, IsCursorRestored));
+                    PerformMouseInput("wheel", TheX, TheY, IsInputBlocked, () => UiTools.PerformWheel(TheX, TheY, TheClicks.Value, IsHorizontal, IsCursorRestored));
                     return McpToolResult.Success(new
                     {
                         message = $"Scrolled {TheAxis} wheel {TheClicks.Value} click(s) at ({TheX}, {TheY}) in window {TheWindowInfo.Handle} (physical events)",
@@ -1003,6 +1004,35 @@ namespace VsMcp.Extension.Tools
                 await DelayAfterActionAsync(InArgs);
             }
             return TheResult;
+        }
+
+        /// <summary>
+        /// Extended (Phase 10): 物理マウス入力を upstream の <c>UiTools.WithBlockedInput</c> 経由でそのまま実行し、
+        /// 前後のフォアグラウンドと注入位置を診断へ残す。入力の内容・順序・カーソル復元の扱いは一切変えない。
+        /// </summary>
+        /// <param name="InKind">入力の種類（click / doubleClick / rightClick / drag / wheel）。</param>
+        /// <param name="InX">注入位置のスクリーン X（物理 px）。</param>
+        /// <param name="InY">注入位置のスクリーン Y（物理 px）。</param>
+        /// <param name="InIsInputBlocked">実行中にユーザー入力を遮断するか。</param>
+        /// <param name="InPerform">実際の入力注入。</param>
+        private static void PerformMouseInput(string InKind, int InX, int InY, bool InIsInputBlocked, Action InPerform)
+        {
+            long TheForegroundBefore = GetForegroundWindow().ToInt64();
+            UiTools.WithBlockedInput(InIsInputBlocked, InPerform);
+            if (!DiagnosticHub.IsEnabled(DiagnosticLevel.Verbose))
+            {
+                return;
+            }
+            long TheForegroundAfter = GetForegroundWindow().ToInt64();
+            DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.INPUT, "input.mouse", InData =>
+            {
+                InData["kind"] = InKind;
+                InData["point"] = $"{InX},{InY}";
+                InData["blockInput"] = InIsInputBlocked;
+                InData["foregroundBefore"] = TheForegroundBefore;
+                InData["foregroundAfter"] = TheForegroundAfter;
+                InData["changedForeground"] = TheForegroundAfter != TheForegroundBefore;
+            });
         }
     }
 }

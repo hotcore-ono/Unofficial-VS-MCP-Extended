@@ -43,7 +43,8 @@ namespace VsMcp.Extension.Tools
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         public static void Register(McpToolRegistry InRegistry, VsServiceAccessor InAccessor)
         {
-            InRegistry.Register(
+            // Extended (Phase 10): 登録は DiagnosticToolRunner を通し、tool.start / tool.end と相関 ID を付ける（schema・戻り値・エラー文は不変）
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "ui_window_wait_idle",
                     "[Windows UIA — desktop app being debugged] Wait until the UI Automation tree of one or more top-level windows of the debugged application stops " +

@@ -36,7 +36,8 @@ namespace VsMcp.Extension.Tools
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         public static void Register(McpToolRegistry InRegistry, VsServiceAccessor InAccessor)
         {
-            InRegistry.Register(
+            // Extended (Phase 10): 登録は DiagnosticToolRunner を通し、tool.start / tool.end と相関 ID を付ける（schema・戻り値・エラー文は不変）
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_dialog_detect",
                     "[Windows UIA — desktop app being debugged] List the standard Windows dialogs (class #32770) currently shown by the debugged processes and classify each " +
@@ -53,7 +54,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => StandardDialogDetectAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_dialog_get_info",
                     "[Windows UIA — desktop app being debugged] Return the structured content of one standard dialog of the debugged application by its HWND " +
@@ -68,7 +69,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => StandardDialogGetInfoAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_dialog_capture",
                     "[Windows UIA — desktop app being debugged] Capture a screenshot of one standard dialog of the debugged application by its HWND, together with its " +
@@ -80,7 +81,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => StandardDialogCaptureAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_dialog_execute",
                     "[Windows UIA — desktop app being debugged] Press a button on a MessageBox or TaskDialog of the debugged application. Identify the button by the " +
@@ -98,7 +99,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => StandardDialogExecuteAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_dialog_wait",
                     "[Windows UIA — desktop app being debugged] Wait until a standard dialog (MessageBox / TaskDialog) of the debugged application appears. Polls the visible " +
@@ -116,7 +117,7 @@ namespace VsMcp.Extension.Tools
                         .Build()),
                 InArgs => StandardDialogWaitAsync(InAccessor, InArgs));
 
-            InRegistry.Register(
+            DiagnosticToolRunner.Register(InRegistry,
                 new McpToolDefinition(
                     "standard_dialog_wait_closed",
                     "[Windows UIA — desktop app being debugged] Wait until the standard dialog with the given HWND is closed. Same semantics as ui_wait_for_window_closed " +
@@ -151,6 +152,16 @@ namespace VsMcp.Extension.Tools
                 return McpToolResult.Error(DebuggeeWindowResolver.NoDebuggedProcessMessage);
 
             List<ClassifiedDialog> TheDialogs = await FindDialogsAsync(TheProcessIds, TheQuery, DialogTypeAny, TheIncludeUnknown);
+
+            // Extended (Phase 10): 検出した件数と種別だけを診断へ残す（タイトル本文は出さない）
+            List<ClassifiedDialog> TheFound = TheDialogs;
+            DiagnosticHub.Emit(DiagnosticLevel.Info, DiagnosticCategory.DIALOG, "dialog.detect", InData =>
+            {
+                InData["count"] = TheFound.Count;
+                InData["includeUnknown"] = TheIncludeUnknown;
+                InData["dialogTypes"] = new JArray(TheFound.Select(TheDialog => TheDialog.DialogType).ToArray());
+            });
+
             return McpToolResult.Success(new
             {
                 count = TheDialogs.Count,
@@ -286,6 +297,21 @@ namespace VsMcp.Extension.Tools
                 }
                 await Task.Delay(ExecuteClosePollMs);
             }
+
+            // Extended (Phase 10): 押したボタンの ID・action・実行方式・閉じたかを診断へ残す（表示文字列は出さない）
+            StandardDialogButtonInfo ThePressedButton = TheButton;
+            bool IsDialogClosed = TheIsClosed;
+            string TheExecutionMethod = TheMethod;
+            DiagnosticHub.EmitCore(DiagnosticLevel.Info, DiagnosticCategory.DIALOG, "dialog.execute", null, null,
+                TheStopwatch.ElapsedMilliseconds, IsDialogClosed ? "closed" : "stillOpen", null, InData =>
+                {
+                    InData["dialogHandle"] = TheInfo.Handle;
+                    InData["dialogType"] = TheInfo.DialogType;
+                    InData["buttonId"] = ThePressedButton.Id;
+                    InData["action"] = ThePressedButton.Action;
+                    InData["method"] = TheExecutionMethod;
+                    InData["dialogClosed"] = IsDialogClosed;
+                }, null);
 
             return McpToolResult.Success(new
             {
@@ -442,6 +468,16 @@ namespace VsMcp.Extension.Tools
                 {
                     StandardDialogStructure TheStructure = StandardDialogResolver.Inspect(TheNormalized);
                     StandardDialogInfo TheInfo = StandardDialogResolver.BuildInfo(TheWindow, TheStructure, out IStandardDialogAdapter TheAdapter);
+
+                    // Extended (Phase 10): 分類結果（種別・ボタン ID）を診断へ残す（表示文字列は出さない）
+                    DiagnosticHub.Emit(DiagnosticLevel.Info, DiagnosticCategory.DIALOG, "dialog.classify", InData =>
+                    {
+                        InData["dialogHandle"] = TheInfo.Handle;
+                        InData["dialogType"] = TheInfo.DialogType;
+                        InData["hasAdapter"] = TheAdapter != null;
+                        InData["buttonIds"] = new JArray(TheInfo.Buttons.Select(TheButtonInfo => TheButtonInfo.Id).ToArray());
+                    });
+
                     return new ResolvedDialog
                     {
                         Info = TheInfo,

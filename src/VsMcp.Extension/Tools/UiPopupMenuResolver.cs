@@ -401,6 +401,17 @@ namespace VsMcp.Extension.Tools
                     TheItemElements = TheOwnerSubtreeItems;
                     TheItemsSource = ItemsSourceOwnerSubtree;
                     TheNote = NoteItemsFromOwnerSubtree;
+
+                    // Extended (Phase 10): popup 自身の部分木が空で Owner の部分木から項目を拾った経路を warning として残す
+                    int TheOwnerSubtreeItemCount = TheOwnerSubtreeItems.Count;
+                    DiagnosticHub.Emit(DiagnosticLevel.Warning, DiagnosticCategory.MENU, "menu.fallback", InData =>
+                    {
+                        InData["kind"] = ItemsSourceOwnerSubtree;
+                        InData["menuHandle"] = InWindow.Handle;
+                        InData["ownerHandle"] = InWindow.OwnerHandle;
+                        InData["itemCount"] = TheOwnerSubtreeItemCount;
+                    });
+                    DiagnosticErrorDump.Schedule(DiagnosticScope.Current, null, DiagnosticLevel.Warning, "menu.fallback", InWindow.Handle);
                 }
             }
 
@@ -433,6 +444,19 @@ namespace VsMcp.Extension.Tools
 
             OutMenu = TheMenu;
             OutItemElements = TheItemElements;
+
+            // Extended (Phase 10): 分類の結果（種別・項目の出どころ・件数）を診断へ残す（分類そのものは変えない）
+            UiMenuInfo TheClassifiedMenu = TheMenu;
+            DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.MENU, "menu.classify", InData =>
+            {
+                InData["menuHandle"] = TheClassifiedMenu.Handle;
+                InData["menuType"] = TheClassifiedMenu.MenuType;
+                InData["itemsSource"] = TheClassifiedMenu.ItemsSource;
+                InData["itemCount"] = TheClassifiedMenu.Items == null ? 0 : TheClassifiedMenu.Items.Count;
+                InData["className"] = TheClassifiedMenu.ClassName;
+                InData["ownerHandle"] = TheClassifiedMenu.OwnerHandle;
+                InData["note"] = TheClassifiedMenu.Note;
+            });
             return true;
         }
 
@@ -955,9 +979,28 @@ namespace VsMcp.Extension.Tools
             WindowInfo TheOwnerWindow = TryResolveOwnerWindowInfo(InWindow);
             if (TheOwnerWindow == null || !IsPopupOwnerWindow(TheOwnerWindow))
             {
+                // Extended (Phase 10): XAML ランタイムのオーバーレイを候補から外したことを診断へ残す（判定は変えない）
+                bool HasOwnerWindow = TheOwnerWindow != null;
+                DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.MENU, "menu.classify", InData =>
+                {
+                    InData["menuHandle"] = InWindow.Handle;
+                    InData["ownerHandle"] = InWindow.OwnerHandle;
+                    InData["rejected"] = HasOwnerWindow ? "ownerIsNotPopup" : "ownerNotResolved";
+                });
                 return false;
             }
-            return IsFittingInOwnerRect(InWindow, TheOwnerWindow);
+
+            bool IsFitting = IsFittingInOwnerRect(InWindow, TheOwnerWindow);
+            if (!IsFitting)
+            {
+                DiagnosticHub.Emit(DiagnosticLevel.Verbose, DiagnosticCategory.MENU, "menu.classify", InData =>
+                {
+                    InData["menuHandle"] = InWindow.Handle;
+                    InData["ownerHandle"] = InWindow.OwnerHandle;
+                    InData["rejected"] = "largerThanOwnerRect";
+                });
+            }
+            return IsFitting;
         }
 
         /// <summary>
