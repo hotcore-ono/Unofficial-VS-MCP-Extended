@@ -53,7 +53,11 @@ namespace VsMcp.Extension.Tools
         /// <summary>機密語を含む key=value / key: value / "key":"value" の value を捕まえる正規表現。</summary>
         private static readonly Regex _SENSITIVE_ASSIGNMENT_PATTERN = new Regex(
             "(?<key>password|passphrase|secret|token|apikey|api_key|authorization|cookie|credential|privatekey|private_key)"
-            + "(?<separator>\"?\\s*[:=]\\s*\"?)(?<value>[^\"\\s,;}]+)",
+            // Extended: 単引用符で囲まれた文（Element with Name 'token=abc' not found）で閉じ引用符を value に巻き込まないよう、
+            // separator は ' も許す（token='abc' の形も伏せる）。value は " 空白 , ; } を含まない文字の連続とし、
+            // 単引用符は「直後が空白・区切り（, ; :）・閉じ括弧（) ]）・. ! ?・終端」のときだけ値の終わりとみなす。
+            // 値の途中の単引用符（password=ab'cd / O'Reilly）では止まらず、後半が平文で残らない。
+            + "(?<separator>[\"']?\\s*[:=]\\s*[\"']?)(?<value>[^\"'\\s,;}](?:[^\"'\\s,;}]|'(?![\\s,;:)\\].!?]|$))*)",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>Windows のローカルパス（X:\...）と UNC パス（\\server\...）を捕まえる正規表現。</summary>
