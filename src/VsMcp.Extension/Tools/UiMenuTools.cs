@@ -376,7 +376,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_menu_detect failed: {TheException.Message}");
+                return McpToolResult.Error($"ui_menu_detect failed: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
         }
 
@@ -464,7 +464,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_menu_select failed in menu {TheResolved.Window.ToInt64()}: {TheException.Message}");
+                return McpToolResult.Error($"ui_menu_select failed in menu {TheResolved.Window.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
         }
 
@@ -502,7 +502,7 @@ namespace VsMcp.Extension.Tools
                 }
                 catch (Exception TheException)
                 {
-                    return McpToolResult.Error($"ui_menu_wait failed: {TheException.Message}");
+                    return McpToolResult.Error($"ui_menu_wait failed: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
                 }
 
                 if (TheLastDetection.Menus.Count > 0)
@@ -593,7 +593,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"Failed to inspect popup menu {TheWindowInfo.Handle}: {TheException.Message}");
+                return McpToolResult.Error($"Failed to inspect popup menu {TheWindowInfo.Handle}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
 
             if (TheStartMenu == null || !UiPopupMenuResolver.IsKnownMenuType(TheStartMenu.MenuType))
@@ -620,7 +620,7 @@ namespace VsMcp.Extension.Tools
                 }
                 catch (Exception TheException)
                 {
-                    return McpToolResult.Error($"ui_menu_wait_closed failed for menu {TheMenuHandle}: {TheException.Message}");
+                    return McpToolResult.Error($"ui_menu_wait_closed failed for menu {TheMenuHandle}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
                 }
 
                 if (TheReason != null)
@@ -682,7 +682,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_menu_close failed for menu {TheResolved.Window.ToInt64()}: {TheException.Message}");
+                return McpToolResult.Error($"ui_menu_close failed for menu {TheResolved.Window.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
             if (TheTarget.Error != null)
             {
@@ -833,7 +833,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_menu_close failed for menu {TheMenu.Handle}: {TheException.Message}");
+                return McpToolResult.Error($"ui_menu_close failed for menu {TheMenu.Handle}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
 
             return BuildCloseResult(TheClosedReason != null, TheStopwatch, TheMenu.Handle, TheUsedMethod, TheClosedReason, TheAttempts, TheEscapeCount,
@@ -973,7 +973,7 @@ namespace VsMcp.Extension.Tools
                 }
                 catch (Exception TheException)
                 {
-                    return McpToolResult.Error($"ui_menu_select_path failed in menu {TheSegmentMenuHandle}: {TheException.Message}");
+                    return McpToolResult.Error($"ui_menu_select_path failed in menu {TheSegmentMenuHandle}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
                 }
                 if (TheStep.Error != null)
                 {
@@ -997,7 +997,7 @@ namespace VsMcp.Extension.Tools
                     }
                     catch (Exception TheException)
                     {
-                        return McpToolResult.Error($"ui_menu_select_path failed in menu {TheStep.MenuHandle}: {TheException.Message}");
+                        return McpToolResult.Error($"ui_menu_select_path failed in menu {TheStep.MenuHandle}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
                     }
                     if (TheCandidates.Menus.Count == 0)
                     {
@@ -1036,7 +1036,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_menu_select_path failed in menu {TheCurrentHandle}: {TheException.Message}");
+                return McpToolResult.Error($"ui_menu_select_path failed in menu {TheCurrentHandle}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
             return McpToolResult.Success(new
             {
@@ -1271,7 +1271,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                TheResolved.Error = McpToolResult.Error($"Failed to inspect popup menu {TheWindowInfo.Handle}: {TheException.Message}");
+                TheResolved.Error = McpToolResult.Error($"Failed to inspect popup menu {TheWindowInfo.Handle}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
                 return TheResolved;
             }
         }

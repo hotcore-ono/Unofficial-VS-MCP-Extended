@@ -52,7 +52,9 @@ namespace VsMcp.Extension.Tools
                     "waits for the window given by 'windowHandle'; 'active' resolves the currently active debuggee window like ui_get_active_window (a modal dialog " +
                     "wins over its disabled owner) and waits for it; 'all' waits for every visible, enabled, non-minimized top-level window of the debugged process " +
                     "together (disabled owners of modal dialogs are excluded so they cannot block forever). Returns text { idle, mode, elapsedMs, finalElementCount, " +
-                    "windowHandle, windows, resolutionSource, quietMs, timeoutMs }; idle=false on timeout. timeoutMs default 10000, max 55000; pollIntervalMs min 50.",
+                    "windowHandle, windows, resolutionSource, quietMs, timeoutMs }; idle=false on timeout. timeoutMs default 10000, max 55000; pollIntervalMs min 50. " +
+                    "In 'single' and 'active' mode, if the watched window is closed while waiting, an error is returned instead of idle=true; " +
+                    "to wait for a window to close, use ui_wait_for_window_closed.",
                     SchemaBuilder.Create()
                         .AddInteger("windowHandle", "HWND of the window to watch (decimal); required for mode 'single', ignored otherwise")
                         .AddEnum("mode", "Which windows to watch: 'single' (default), 'active', 'all'", new[] { _MODE_SINGLE, _MODE_ACTIVE, _MODE_ALL })
@@ -171,7 +173,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_window_wait_idle failed: {TheException.Message}");
+                return McpToolResult.Error($"ui_window_wait_idle failed: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
         }
 

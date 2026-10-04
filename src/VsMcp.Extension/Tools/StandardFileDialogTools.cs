@@ -632,7 +632,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return new ResolvedFileDialog { Error = McpToolResult.Error($"Failed to inspect file dialog {TheNormalizedHandle}: {TheException.Message}") };
+                return new ResolvedFileDialog { Error = McpToolResult.Error($"Failed to inspect file dialog {TheNormalizedHandle}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}") };
             }
         }
 

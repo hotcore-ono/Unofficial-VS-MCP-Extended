@@ -65,6 +65,7 @@ upstream の generic ツールはメインウィンドウ固定なので、モ�
   後続のプロンプトは `standard_dialog_detect` / `standard_dialog_execute` で処理する。
 - メニューは HWND が再利用されるため、`ui_menu_detect` / `_wait` / `_wait_closed` は内容で判定する。
 - 待機は sleep ではなく `*_wait` / `*_wait_closed` / `ui_window_wait_idle` を使う。
+- `ui_window_wait_idle` は、`single` / `active` で待機中に対象ウィンドウが閉じると `idle=true` ではなくエラーを返す。閉じるのを待つなら `ui_wait_for_window_closed` を使う。
 
 ## Do Not
 

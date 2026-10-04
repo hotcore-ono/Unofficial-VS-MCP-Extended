@@ -276,7 +276,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"Failed to read UI Automation information of window {TheWindow.ToInt64()}: {TheException.Message}");
+                return McpToolResult.Error($"Failed to read UI Automation information of window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
         }
 
@@ -491,7 +491,7 @@ namespace VsMcp.Extension.Tools
                     }
                     catch (Exception TheException)
                     {
-                        return McpToolResult.Error($"UI Automation search failed in window {TheWindow.ToInt64()}: {TheException.Message}");
+                        return McpToolResult.Error($"UI Automation search failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
                     }
                     if (TheSearchError != null)
                     {

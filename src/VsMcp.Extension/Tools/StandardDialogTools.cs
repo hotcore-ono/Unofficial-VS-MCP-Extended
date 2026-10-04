@@ -490,7 +490,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return new ResolvedDialog { Error = McpToolResult.Error($"Failed to inspect dialog {TheNormalizedHandle}: {TheException.Message}") };
+                return new ResolvedDialog { Error = McpToolResult.Error($"Failed to inspect dialog {TheNormalizedHandle}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}") };
             }
         }
 

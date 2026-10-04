@@ -129,7 +129,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_window_send_keys failed in window {TheWindow.ToInt64()}: {TheException.Message}");
+                return McpToolResult.Error($"ui_window_send_keys failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
 
             if (!TheResult.IsError && TheWaitMs > 0)

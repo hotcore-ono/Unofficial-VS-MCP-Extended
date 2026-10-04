@@ -216,6 +216,10 @@ ui_menu_wait / ui_menu_wait_closed
 ui_window_wait_idle          (mode: single / active / all)
 ```
 
+`ui_window_wait_idle` returns an error (not `idle=true`) if the watched window is
+closed while it waits in `single` / `active` mode; to wait for a window to close,
+use `ui_wait_for_window_closed`.
+
 Argument names differ by tool family: `ui_wait_for_window` /
 `ui_wait_for_window_closed` / `ui_capture_window_by_handle` / `ui_menu_*` /
 `standard_dialog_*` / `standard_file_dialog_*` take `handle` (or `title`),

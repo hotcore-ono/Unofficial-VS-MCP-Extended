@@ -437,7 +437,7 @@ namespace VsMcp.Extension.Tools
             {
                 OutFailure = UiWindowResolveFailure.RootUnavailable;
                 EmitResolve(InWindow, InSelector, OutFailure, 0, 0, TheStopwatch);
-                return $"Window handle {InWindow.ToInt64()} could not be opened as a UI Automation root: {TheException.Message}";
+                return $"Window handle {InWindow.ToInt64()} could not be opened as a UI Automation root: {ExceptionMessageFormatter.FormatWithHResult(TheException)}";
             }
 
             int TheLimit = InSelector.Index.HasValue ? _MAX_INDEXED_CANDIDATES : _MAX_AMBIGUOUS_CANDIDATES + 1;

@@ -316,7 +316,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_window_click failed in window {TheWindow.ToInt64()}: {TheException.Message}");
+                return McpToolResult.Error($"ui_window_click failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
 
             if (!TheResult.IsError)
@@ -523,7 +523,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"{InToolName} failed in window {TheWindow.ToInt64()}: {TheException.Message}");
+                return McpToolResult.Error($"{InToolName} failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
 
             if (!TheResult.IsError)
@@ -711,7 +711,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_window_drag failed in window {TheWindow.ToInt64()}: {TheException.Message}");
+                return McpToolResult.Error($"ui_window_drag failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
         }
 
@@ -1061,7 +1061,7 @@ namespace VsMcp.Extension.Tools
             }
             catch (Exception TheException)
             {
-                return McpToolResult.Error($"ui_window_mouse_wheel failed in window {TheWindow.ToInt64()}: {TheException.Message}");
+                return McpToolResult.Error($"ui_window_mouse_wheel failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
             }
 
             if (!TheResult.IsError)
