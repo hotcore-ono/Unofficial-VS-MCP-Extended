@@ -50,14 +50,37 @@ namespace VsMcp.Extension.Tools
             "fileName", "path", "folder", "directory",
         };
 
+        /// <summary>機密語のキー名を捕まえる部分（グループ名 key。_SENSITIVE_ASSIGNMENT_PATTERN の 3 つの選択肢で共通）。</summary>
+        private const string _SENSITIVE_KEY_PATTERN =
+            "(?<key>password|passphrase|secret|token|apikey|api_key|authorization|cookie|credential|privatekey|private_key)";
+
+        /// <summary>
+        /// 値を捕まえる部分（グループ名 value）。" 空白 , ; } を含まない文字の連続で、単引用符では止まらない
+        /// （単引用符を除外文字に足す前の元の文字クラスと同じ。値の途中の単引用符を値の終わりと誤認して後半を平文で残さないため）。
+        /// </summary>
+        private const string _SENSITIVE_VALUE_PATTERN = "(?<value>[^\"\\s,;}]+)";
+
+        /// <summary>
+        /// 値の末尾の単引用符が閉じ引用符であることの先読み（直後が空白・, ; } "・終端のとき）。
+        /// 先読みなので閉じ引用符そのものは value にも match にも含まれず、置換後もそのまま残る。
+        /// </summary>
+        private const string _CLOSING_QUOTE_LOOKAHEAD_PATTERN = "(?='(?:[\\s,;}\"]|$))";
+
         /// <summary>機密語を含む key=value / key: value / "key":"value" の value を捕まえる正規表現。</summary>
         private static readonly Regex _SENSITIVE_ASSIGNMENT_PATTERN = new Regex(
-            "(?<key>password|passphrase|secret|token|apikey|api_key|authorization|cookie|credential|privatekey|private_key)"
-            // Extended: 単引用符で囲まれた文（Element with Name 'token=abc' not found）で閉じ引用符を value に巻き込まないよう、
-            // separator は ' も許す（token='abc' の形も伏せる）。value は " 空白 , ; } を含まない文字の連続とし、
-            // 単引用符は「直後が空白・区切り（, ; :）・閉じ括弧（) ]）・. ! ?・終端」のときだけ値の終わりとみなす。
-            // 値の途中の単引用符（password=ab'cd / O'Reilly）では止まらず、後半が平文で残らない。
-            + "(?<separator>[\"']?\\s*[:=]\\s*[\"']?)(?<value>[^\"'\\s,;}](?:[^\"'\\s,;}]|'(?![\\s,;:)\\].!?]|$))*)",
+            // Extended: 単引用符を値の終わりとして扱うのは、開き引用符が実際にある場合だけにする（上から順に試す）。
+            //   1. キーの直前に ' がある（'token=abc' not found）: 値は空白・"・,・;・} の手前まで。末尾の ' が閉じ引用符
+            //      （直後が空白・, ; } "・終端）のときだけ、その ' を値から外す。pre グループに開き引用符を取り、置換後も保つ。
+            //   2. 区切りの直後に ' がある（token='abc'）: 同じく末尾の ' を閉じ引用符として値から外す。
+            //   3. それ以外: 値は " 空白 , ; } を含まない文字の連続で、単引用符では止まらない。
+            //      password=ab'cd / password=ab'.cd / token=a':b の後半を平文で残さない。
+            // 1・2 で閉じ引用符が見つからない場合（'password=ab'cd x' など）は 3 に落ち、空白で止まる既存の制約どおりになる。
+            "(?:(?<pre>')" + _SENSITIVE_KEY_PATTERN + "(?<separator>[\"']?\\s*[:=]\\s*[\"']?)"
+                + _SENSITIVE_VALUE_PATTERN + _CLOSING_QUOTE_LOOKAHEAD_PATTERN
+            + "|" + _SENSITIVE_KEY_PATTERN + "(?<separator>[\"']?\\s*[:=]\\s*')"
+                + _SENSITIVE_VALUE_PATTERN + _CLOSING_QUOTE_LOOKAHEAD_PATTERN
+            + "|" + _SENSITIVE_KEY_PATTERN + "(?<separator>[\"']?\\s*[:=]\\s*\"?)"
+                + _SENSITIVE_VALUE_PATTERN + ")",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>Windows のローカルパス（X:\...）と UNC パス（\\server\...）を捕まえる正規表現。</summary>
@@ -220,8 +243,9 @@ namespace VsMcp.Extension.Tools
             string TheResult = InText;
             try
             {
+                // Extended: pre はキーの直前の開き引用符（選択肢 1 のときだけ。無ければ空文字）。match の先頭にあるので置換後も保つ
                 TheResult = _SENSITIVE_ASSIGNMENT_PATTERN.Replace(TheResult, InMatch =>
-                    InMatch.Groups["key"].Value + InMatch.Groups["separator"].Value + _REDACTED);
+                    InMatch.Groups["pre"].Value + InMatch.Groups["key"].Value + InMatch.Groups["separator"].Value + _REDACTED);
                 if (InSettings == null || !InSettings.IsFilePathsIncluded)
                 {
                     TheResult = _WINDOWS_PATH_PATTERN.Replace(TheResult, _PATH_PLACEHOLDER);
