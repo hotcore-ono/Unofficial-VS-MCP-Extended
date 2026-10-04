@@ -60,6 +60,12 @@ namespace WindowListSample
         /// <summary>DisabledTestButton の Click が発火した回数（無効要素への操作が拒否される限り 0 のまま）。</summary>
         private int _DisabledClickCount;
 
+        /// <summary>FaultyPeerButton の Click が発火した回数（Invoke 成功時と物理クリック時に増える。EnableFaultyPeerCheckBox が ON で Invoke が失敗したときは増えない）。</summary>
+        private int _FaultyPeerClickCount;
+
+        /// <summary>MaskSampleButton がクリックされた回数。</summary>
+        private int _MaskSampleClickCount;
+
         /// <summary>OpenManyWindowsButton で開いた Window の一覧（CloseManyWindowsButton で全て閉じる）。</summary>
         private readonly List<SampleDialog> _ManyWindows = new List<SampleDialog>();
 
@@ -564,6 +570,31 @@ namespace WindowListSample
         private void UpdateManyWindowsCountText()
         {
             ManyWindowsCountText.Text = $"ManyWindows: {_ManyWindows.Count}";
+        }
+
+        /// <summary>
+        /// FaultyPeerButton の Click。EnableFaultyPeerCheckBox が OFF のとき UIA の Invoke / 物理クリックが通ったことを結果表示欄へ書く
+        /// （ON のときは Invoke が例外を投げるため呼ばれない。物理クリックなら通常どおり呼ばれる）。
+        /// </summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnFaultyPeerButtonClick(object InSender, RoutedEventArgs InArgs)
+        {
+            _FaultyPeerClickCount++;
+            LastDialogResultText.Text = $"最後の結果: FaultyPeerButton -> clicked {_FaultyPeerClickCount}";
+        }
+
+        /// <summary>
+        /// MaskSampleButton の Click。Name が "token=visible"（機密マスクの対象語を含む）のボタンが成功経路で押されたことを結果表示欄へ書く。
+        /// Tool の応答（成功メッセージ・要素情報の name）は伏せられず、そのまま返る。診断ログは includeUiText が既定の false なら
+        /// 引数 name は長さだけが残り、true なら引数要約の name が token=*** になる（診断ログ側の伏せ方の確認用）。
+        /// </summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnMaskSampleClick(object InSender, RoutedEventArgs InArgs)
+        {
+            _MaskSampleClickCount++;
+            LastDialogResultText.Text = $"最後の結果: MaskSampleButton -> clicked {_MaskSampleClickCount}";
         }
     }
 }

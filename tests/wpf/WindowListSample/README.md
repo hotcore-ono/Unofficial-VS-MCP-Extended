@@ -61,6 +61,22 @@ Win32 ポップアップメニュー（`Win32MenuInterop.ShowPopupMenu`）の項
 - `Many Window k` は 200 × 100 に縮めてあるため `CloseDialogButton` が枠内に収まらない。個別に閉じずに `CloseManyWindowsButton` でまとめて閉じる（MainWindow を閉じた場合も Owner 付きのため一緒に閉じる）。
 - オフスクリーン要素の確認には既存 `ScrollableArea` の `ScrollItem40` を使う（スクロールしない限り `IsOffscreen=true`）。
 
+## 診断ログ修正の実機確認用 UI（MainWindow 4 列目の下部）
+
+feature/diagnostics-log-fixes（機密マスクの引用符対応・例外メッセージへの HRESULT 付加）を実機で確認するための UI。既存の画面・AutomationId は変えていない。
+
+| 操作 | 操作対象 AutomationId | 結果表示 AutomationId | 期待する表示 |
+|---|---|---|---|
+| Faulty Peer の有効化 | `EnableFaultyPeerCheckBox`（既定 OFF） | なし | OFF の間は `FaultyPeerButton` が通常のボタンとして動く |
+| Invoke が例外を投げるボタン | `FaultyPeerButton` | `LastDialogResultText` | OFF: `最後の結果: FaultyPeerButton -> clicked N`。ON: `InvokePattern.Invoke` が `COMException`（HRESULT `0x80041234`）を投げ、`ui_window_click` がエラーを返す（表示は変わらない） |
+| 機密マスク対象語を Name に含むボタン | `MaskSampleButton`（Name は `token=visible`） | `LastDialogResultText` | `最後の結果: MaskSampleButton -> clicked N` |
+
+補足:
+
+- `FaultyPeerButton` は `AutomationPeer`（`FaultyPeerButtonAutomationPeer`）を差し替えており、例外を投げるのは `IInvokeProvider.Invoke` だけ。`Name` などのプロパティ取得では投げない（検索走査の途中で投げると、走査側が例外を握りつぶして兄弟要素が見えなくなるため）。
+- 機密マスクの確認は、`ui_window_click` に存在しない名前（例 `token=abc`）を渡し、`diagnostics_export` の tool.end の errorMessage が `'token=***' not found …` になることを見る（Tool の応答そのものは伏せられない。伏せられるのは診断ログだけ）。`ui_window_find_elements` は該当なしのときエラーではなく success（count=0）を返すので、この確認には使えない。
+- 引用符まわりの確認例として、値の途中に単引用符を含む `password=ab'cd` も渡す。errorMessage が `Element with Name 'password=***' not found …` になり、`cd` のような後半が平文で残らないこと。
+
 ## 使い方（Experimental Instance での検証手順）
 
 ```text
