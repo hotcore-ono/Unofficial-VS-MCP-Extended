@@ -223,6 +223,8 @@ internal static extern uint MapVirtualKey(uint uCode, uint uMapType);
     internal const uint GW_OWNER = 4;
     internal const uint GA_ROOT = 2;
     internal const uint MONITOR_DEFAULTTONEAREST = 2;
+    // Extended: 画面外（どのモニターにも属さない）ウィンドウに対して MonitorFromWindow が IntPtr.Zero を返すようにする指定
+    internal const uint MONITOR_DEFAULTTONULL = 0;
 
     // ------------------------------------------------------------------
     // Extended additions (Phase 4): アクティブウィンドウ解決（DebuggeeWindowResolver）で使う GetGUIThreadInfo。

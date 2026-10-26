@@ -82,7 +82,8 @@ namespace VsMcp.Extension.Tools
                     "ui_capture_window_by_title",
                     "[Windows UIA — desktop app being debugged] Capture a screenshot of one visible top-level window of the debugged application located by its title " +
                     "(e.g. a modal dialog, MessageBox or any owned window). Searches the visible top-level windows of every process being debugged with the same " +
-                    "title matching as ui_list_windows, then resolves ambiguity deterministically: a single match is used; if several windows match, the foreground " +
+                    "title matching as ui_list_windows (ui_list_windows itself still lists every window; here, when at least one match is on a monitor, windows that belong to no monitor " +
+                    "— e.g. parked at -32768,-32768 — are dropped from the candidates first), then resolves ambiguity deterministically: a single match is used; if several windows match, the foreground " +
                     "window wins; otherwise the only visible-and-enabled one wins; if it is still ambiguous nothing is captured and the error text lists the candidates " +
                     "(with their HWNDs) so you can pick one with ui_capture_window_by_handle. The resolved window then passes the same safety checks " +
                     "(IsWindow, GetAncestor(GA_ROOT), debugged-process re-check, not minimized) and the same capture pipeline as ui_capture_window_by_handle. " +
@@ -124,7 +125,8 @@ namespace VsMcp.Extension.Tools
                     "ui_wait_for_window",
                     "[Windows UIA — desktop app being debugged] Wait until a top-level window of the debugged application appears. Give either 'handle' or 'title'. " +
                     "With 'title' (+ optional titleMatch / className) the visible top-level windows are polled with the same matching and the same ambiguity rules as " +
-                    "ui_capture_window_by_title (single match, else the foreground one, else the only visible-and-enabled one; still ambiguous → error listing the candidates). " +
+                    "ui_capture_window_by_title (when at least one match is on a monitor, windows that belong to no monitor are dropped from the candidates first; " +
+                    "then single match, else the foreground one, else the only visible-and-enabled one; still ambiguous → error listing the candidates). " +
                     "With 'handle' the call only checks that this HWND exists now and belongs to a debugged process and returns immediately — an HWND cannot be known " +
                     "before the window exists and may be reused by the OS, so an invalid handle is an error rather than something to wait for; 'title' is ignored then. " +
                     "Returns text { found, elapsedMs, resolutionReason, window }; found=false with window=null on timeout. timeoutMs default 10000, max 55000 " +
@@ -492,8 +494,24 @@ namespace VsMcp.Extension.Tools
             {
                 List<WindowInfo> TheCandidates = DebuggeeWindowResolver.Filter(
                     DebuggeeWindowEnumerator.EnumerateTopLevelWindows(InProcessIds, false), InQuery);
-                return DebuggeeWindowResolver.ResolveCandidates(TheCandidates);
+                // Extended: 画面外へ退避された同名の窓で特定不能になるのを防ぐ（ui_list_windows の一覧には影響しない。候補作成だけ）
+                return DebuggeeWindowResolver.ResolveCandidates(PreferOnScreenWindows(TheCandidates));
             });
+        }
+
+        /// <summary>
+        /// Extended: 画面外（どのモニターにも属さない。例: Left=-32768 へ退避された WPF の窓）のウィンドウを候補から外す。
+        /// 同じタイトルの窓の一部が画面外にあるだけで候補が特定不能になるのを防ぐための絞り込み。
+        /// 画面内の候補が 1 件も無いときは従来どおり全候補を返す（画面外の窓しか無い問い合わせを、これまで解決できていたのに失敗させない）。
+        /// </summary>
+        /// <param name="InCandidates">タイトル等で絞り込み済みの候補。</param>
+        /// <returns>画面内の候補。画面内の候補が無ければ InCandidates そのもの。</returns>
+        private static List<WindowInfo> PreferOnScreenWindows(List<WindowInfo> InCandidates)
+        {
+            List<WindowInfo> TheOnScreenCandidates = InCandidates
+                .Where(TheCandidate => NativeMethods.MonitorFromWindow(new IntPtr(TheCandidate.Handle), NativeMethods.MONITOR_DEFAULTTONULL) != IntPtr.Zero)
+                .ToList();
+            return TheOnScreenCandidates.Count > 0 ? TheOnScreenCandidates : InCandidates;
         }
 
         /// <summary>
