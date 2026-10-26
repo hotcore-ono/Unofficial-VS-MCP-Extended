@@ -481,6 +481,7 @@ content and skips unchanged files).
 - `standard_dialog_*` / `standard_file_dialog_*` — MessageBox, TaskDialog and Open / Save / Folder dialogs, driven by logical action or control ID instead of localized captions.
 - `diagnostics_*` — persistent JSONL trace of the tools plus a ZIP export for bug reports.
 - Details: `docs/extended/` (`10-CLAUDE-GUIDANCE-AND-SKILL.md`, `11-DIAGNOSTICS.md`).
+- The VSIX is registered as **VS MCP Server (Extended)** (publisher `hotcore`, identity `VsMcp.Extension.Extended.*`), so the Marketplace copy of upstream is never offered as an update. It shares the package GUID with upstream, so uninstall upstream's "VS MCP Server" first; the two cannot be installed side by side. See `docs/extended/08-RELEASE-POLICY.md`.
 
 ## Contributing
 
