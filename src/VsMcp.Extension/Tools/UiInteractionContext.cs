@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using VsMcp.Shared.Protocol;
 using static VsMcp.Extension.Tools.NativeMethods;
 
 namespace VsMcp.Extension.Tools
@@ -167,12 +170,13 @@ namespace VsMcp.Extension.Tools
         /// <param name="InRole">エラーメッセージの接頭辞（"Drag source" 等）。空なら付けない。</param>
         /// <param name="OutElement">解決した要素。エラー時は null。</param>
         /// <param name="OutFailure">要素を解決できなかった理由。正常時は None。</param>
+        /// <param name="InToken">Extended: 呼び出し側の締め切り。要素検索が各要素で確認する。既定（None）は従来どおり中断しない。</param>
         /// <returns>エラーメッセージ。正常なら null。</returns>
         public string ResolveElement(UiWindowElementSelector InSelector, bool InIsPhysical, string InRole,
-            out UiWindowResolvedElement OutElement, out UiWindowResolveFailure OutFailure)
+            out UiWindowResolvedElement OutElement, out UiWindowResolveFailure OutFailure, CancellationToken InToken = default(CancellationToken))
         {
             string ThePrefix = string.IsNullOrEmpty(InRole) ? string.Empty : InRole + ": ";
-            string TheResolveError = UiWindowElementResolver.TryResolveSingle(Window, InSelector, out OutElement, out OutFailure);
+            string TheResolveError = UiWindowElementResolver.TryResolveSingle(Window, InSelector, out OutElement, out OutFailure, InToken);
             if (TheResolveError != null)
             {
                 EmitPrepareFailure(InSelector, InIsPhysical, InRole, OutFailure.ToString());
@@ -344,6 +348,114 @@ namespace VsMcp.Extension.Tools
         public void RestoreCursor(POINT InPoint)
         {
             UiTools.WithDpiAwareness(() => SetCursorPos(InPoint.X, InPoint.Y));
+        }
+    }
+
+    /// <summary>
+    /// Extended: Action 系ツール 1 回分の「締め切り」と「いま実行している段階」の記録。
+    /// UiTools.RunUiaWithTimeoutAsync は 30 秒で待つのをやめて TimeoutException を投げるだけで、STA スレッドは止まらない。
+    /// そのため締め切り（同じ 30 秒）を CancellationToken として要素検索へ渡し、パターン実行・物理入力の直前にも確認して、
+    /// 締め切り後に検索が終わっても操作を実行しないようにする。段階は TimeoutException の文末（stage: …）に載せて、どこで止まったかを示す。
+    /// 呼び出し元はツール 1 回につき 1 つ作り、try / finally で Dispose する。段階は STA スレッドが書き、呼び出し元スレッドが読む。
+    /// </summary>
+    internal sealed class UiActionProgress : IDisposable
+    {
+        /// <summary>検索を始める前の段階名（要素の解決中）。</summary>
+        public const string STAGE_RESOLVING = "resolving";
+
+        /// <summary>締め切りで取り消される CancellationTokenSource。</summary>
+        private readonly CancellationTokenSource _Deadline;
+
+        /// <summary>いま実行している段階。Volatile で読み書きする。</summary>
+        private string _Stage = STAGE_RESOLVING;
+
+        /// <summary>締め切りで取り消されるトークン（Dispose 後も読めるよう生成時に取得する）。要素検索へ渡す。</summary>
+        public CancellationToken Token { get; private set; }
+
+        /// <summary>いま実行している段階（resolving / invokePattern / physicalClick など）。</summary>
+        public string Stage
+        {
+            get { return Volatile.Read(ref _Stage); }
+        }
+
+        /// <summary>UIA のタイムアウトと同じ秒数の締め切りを開始する。</summary>
+        public UiActionProgress()
+        {
+            _Deadline = new CancellationTokenSource(TimeSpan.FromSeconds(UiTools.UiaTimeoutSeconds));
+            Token = _Deadline.Token;
+        }
+
+        /// <summary>
+        /// 締め切りを過ぎていれば実行せずに TimeoutException を投げ、過ぎていないときだけ段階を記録する
+        /// （実行していない段階の名前を stage に表示しないため。投げたときの stage は直前に実行した段階のまま）。
+        /// パターン実行・物理入力の直前に呼ぶ（締め切り後に検索が終わっても操作を実行しないため）。
+        /// 例外の文面は RunUiaWithTimeoutAsync の TimeoutException と同じで、段階は呼び出し側が文末へ付ける。
+        /// </summary>
+        /// <param name="InStage">これから実行する段階名。</param>
+        public void Enter(string InStage)
+        {
+            ThrowIfExpired();
+            Volatile.Write(ref _Stage, InStage);
+        }
+
+        /// <summary>締め切りを過ぎていれば TimeoutException を投げる（段階は変えない）。</summary>
+        public void ThrowIfExpired()
+        {
+            if (Token.IsCancellationRequested)
+            {
+                throw new TimeoutException($"UI Automation timed out after {UiTools.UiaTimeoutSeconds} seconds. The target application may not be responding.");
+            }
+        }
+
+        /// <summary>
+        /// 既存の文面の末尾に最後の段階を付けたタイムアウトのエラー文を返す（締め切りは動かさない）。
+        /// STA スレッド内で TimeoutException を捕まえてエラー結果へ変換するときに使う。
+        /// </summary>
+        /// <param name="InException">RunUiaWithTimeoutAsync または ThrowIfExpired が投げた TimeoutException。</param>
+        /// <returns>例外の文面 + " (stage: 段階)"。</returns>
+        public string DescribeTimeout(TimeoutException InException)
+        {
+            return $"{InException.Message} (stage: {Stage})";
+        }
+
+        /// <summary>
+        /// 呼び出し元が待つのをやめた（RunUiaWithTimeoutAsync が TimeoutException を投げた）ときに呼ぶ。
+        /// 締め切りを確定させ（まだ動いている STA スレッドの検索と、これから始まる操作を止める）、<see cref="DescribeTimeout"/> のエラー文を返す。
+        /// </summary>
+        /// <param name="InException">RunUiaWithTimeoutAsync が投げた TimeoutException。</param>
+        /// <returns>例外の文面 + " (stage: 段階)"。</returns>
+        public string CancelAndDescribeTimeout(TimeoutException InException)
+        {
+            _Deadline.Cancel();
+            return DescribeTimeout(InException);
+        }
+
+        /// <summary>
+        /// 背景 STA スレッドで InAction を UIA のタイムアウト付きで実行する（<c>UiTools.RunUiaWithTimeoutAsync</c> と同じ）。
+        /// 締め切り後に STA 側で Enter / ThrowIfExpired が投げた TimeoutException は、ここで段階付きのエラー結果へ変換する
+        /// （呼び出し元が待つのをやめた後に投げた例外が、未観測の Task 例外として残らないようにする）。
+        /// </summary>
+        /// <param name="InAction">STA スレッドで実行する本体。</param>
+        /// <returns>InAction の結果。STA 側が締め切りで止めた場合は段階付きのエラー結果。</returns>
+        public Task<McpToolResult> RunUiaAsync(Func<McpToolResult> InAction)
+        {
+            return UiTools.RunUiaWithTimeoutAsync(() =>
+            {
+                try
+                {
+                    return InAction();
+                }
+                catch (TimeoutException TheException)
+                {
+                    return McpToolResult.Error(DescribeTimeout(TheException));
+                }
+            });
+        }
+
+        /// <summary>締め切りのタイマーを破棄する。</summary>
+        public void Dispose()
+        {
+            _Deadline.Dispose();
         }
     }
 }

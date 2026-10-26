@@ -155,6 +155,18 @@ namespace VsMcp.Extension.Tools
         /// </summary>
         private const int _MAX_VISITED_ELEMENTS = 10000;
 
+        /// <summary>Extended: uia.resolve の method。FindAll(TreeScope.Subtree) の高速経路で解決したことを表す。</summary>
+        private const string _METHOD_FIND_ALL = "findAll";
+
+        /// <summary>Extended: uia.resolve の method。TreeWalker（CollectMatches）による従来の走査で解決したことを表す。</summary>
+        private const string _METHOD_TREE_WALKER = "treeWalker";
+
+        /// <summary>
+        /// Extended: uia.resolve の method。FindAll を先に試したが結論が出ず（2 件以上または FindAll の失敗）、
+        /// 従来の走査（TreeWalker）で解決したことを表す。FindAll に使った時間は findAllElapsedMs に載せる。
+        /// </summary>
+        private const string _METHOD_FIND_ALL_THEN_TREE_WALKER = "findAllThenTreeWalker";
+
         /// <summary>
         /// 引数からセレクターを読む。prefix が空なら automationId / name / controlType / className / index、
         /// "source" なら sourceAutomationId / sourceName / … のように先頭を大文字にして連結したキーを読む。
@@ -263,14 +275,8 @@ namespace VsMcp.Extension.Tools
                 bool IsAccepted = true;
                 if (!InIsOffscreenIncluded)
                 {
-                    try
-                    {
-                        IsAccepted = !InRoot.Current.IsOffscreen;
-                    }
-                    catch
-                    {
-                        IsAccepted = false;
-                    }
+                    // Extended: IsOffscreen の除外（読めない要素も除外）は FindAll の高速経路と同じ IsOffscreenOrUnreadable に一本化
+                    IsAccepted = !IsOffscreenOrUnreadable(InRoot);
                 }
                 if (IsAccepted && InRequiredRootHandle != 0 && ResolveTopLevelHandle(InRoot) != InRequiredRootHandle)
                 {
@@ -337,7 +343,7 @@ namespace VsMcp.Extension.Tools
             return 0;
         }
 
-        /// <summary>要素が対応する UIA パターン名（invoke / value / selectionItem / toggle / expandCollapse / scroll）を列挙する。</summary>
+        /// <summary>要素が対応する UIA パターン名（invoke / value / selectionItem / toggle / expandCollapse / scroll / scrollItem）を列挙する。</summary>
         /// <param name="InElement">対象要素。</param>
         /// <returns>対応するパターン名の一覧。</returns>
         public static List<string> GetPatternNames(AutomationElement InElement)
@@ -349,6 +355,8 @@ namespace VsMcp.Extension.Tools
             AddPatternIfSupported(InElement, TogglePattern.Pattern, "toggle", ThePatterns);
             AddPatternIfSupported(InElement, ExpandCollapsePattern.Pattern, "expandCollapse", ThePatterns);
             AddPatternIfSupported(InElement, ScrollPattern.Pattern, "scroll", ThePatterns);
+            // Extended: ui_window_click が画面外の要素を ScrollIntoView できるかを呼び出し側が判断できるよう、既存項目の末尾に scrollItem を足す
+            AddPatternIfSupported(InElement, ScrollItemPattern.Pattern, "scrollItem", ThePatterns);
             return ThePatterns;
         }
 
@@ -413,14 +421,20 @@ namespace VsMcp.Extension.Tools
         /// <param name="InSelector">セレクター。</param>
         /// <param name="OutElement">解決した要素。エラー時は null。</param>
         /// <param name="OutFailure">解決できなかった理由。正常なら None。</param>
+        /// <param name="InToken">
+        /// Extended: 呼び出し側の締め切り（UIA の 30 秒タイムアウトと同じ）。要素検索の再帰が各要素で確認する。
+        /// 検索が締め切りで止まったときは部分的な候補で一意性を主張せず SearchAborted で失敗する。既定（None）は従来どおり中断しない。
+        /// </param>
         /// <returns>エラーメッセージ。正常なら null。</returns>
         public static string TryResolveSingle(IntPtr InWindow, UiWindowElementSelector InSelector, out UiWindowResolvedElement OutElement,
-            out UiWindowResolveFailure OutFailure)
+            out UiWindowResolveFailure OutFailure, CancellationToken InToken = default(CancellationToken))
         {
             OutElement = null;
             OutFailure = UiWindowResolveFailure.None;
             // Extended (Phase 11): どの return 経路でも所要時間を読めるように、解決の入口で計測を始める
             Stopwatch TheStopwatch = Stopwatch.StartNew();
+            // Extended: 解決に使った経路（findAll / treeWalker）。検索を始める前に失敗する経路では null のまま（uia.resolve に載せない）
+            string TheMethod = null;
             if (!InSelector.HasCriteria)
             {
                 OutFailure = UiWindowResolveFailure.NoCriteria;
@@ -444,21 +458,49 @@ namespace VsMcp.Extension.Tools
             List<AutomationElement> TheMatches = new List<AutomationElement>();
             int TheSkippedOtherWindows = 0;
             int TheVisitedCount = 0;
-            CollectMatches(TheRoot, ToCriteria(InSelector), true, TheLimit, InWindow.ToInt64(), TreeWalker.ControlViewWalker, _MAX_VISITED_ELEMENTS,
-                TheMatches, ref TheSkippedOtherWindows, ref TheVisitedCount, CancellationToken.None);
+            // Extended: automationId か name の指定があり index が無いときは、FindAll を 1 回呼ぶ高速経路で 0 件・1 件を確定する
+            // （TryResolveSingle のセレクターは常に Exact）。2 件以上（曖昧）や FindAll の失敗は従来の走査へ回し、曖昧エラーの候補順と index の採番を従来と同一に保つ。
+            // 回した場合は method を findAllThenTreeWalker にして、FindAll に使った時間を findAllElapsedMs に残す
+            bool IsResolvedByFindAll = false;
+            long? TheFindAllElapsedMs = null;
+            TheMethod = _METHOD_TREE_WALKER;
+            if (CanUseFindAllPath(InSelector))
+            {
+                Stopwatch TheFindAllStopwatch = Stopwatch.StartNew();
+                IsResolvedByFindAll = TryCollectMatchesWithFindAll(TheRoot, InSelector, InWindow.ToInt64(), true, TheMatches);
+                TheMethod = IsResolvedByFindAll ? _METHOD_FIND_ALL : _METHOD_FIND_ALL_THEN_TREE_WALKER;
+                TheFindAllElapsedMs = IsResolvedByFindAll ? (long?)null : TheFindAllStopwatch.ElapsedMilliseconds;
+            }
+            if (IsResolvedByFindAll)
+            {
+                TheVisitedCount = -1;   // FindAll は UIA プロバイダー側で走査するため、訪問数は数えられない
+            }
+            else
+            {
+                CollectMatches(TheRoot, ToCriteria(InSelector), true, TheLimit, InWindow.ToInt64(), TreeWalker.ControlViewWalker, _MAX_VISITED_ELEMENTS,
+                    TheMatches, ref TheSkippedOtherWindows, ref TheVisitedCount, InToken);
+            }
 
+            if (InToken.IsCancellationRequested)
+            {
+                // Extended: 締め切りで中断した検索の候補は「全候補」ではないので、一意性を主張せずに拒否する（呼び出し側は TimeoutException として扱う）
+                OutFailure = UiWindowResolveFailure.SearchAborted;
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch, TheMethod, TheFindAllElapsedMs);
+                return $"Element search in window {InWindow.ToInt64()} was cancelled because the {UiTools.UiaTimeoutSeconds} second UI Automation deadline passed " +
+                    $"(criteria: {InSelector.Describe()})";
+            }
             if (TheVisitedCount >= _MAX_VISITED_ELEMENTS)
             {
                 // Extended (Phase 9): 走査が内部上限で打ち切られた時点の候補は「全候補」ではないので、一意性を主張せずに拒否する
                 OutFailure = UiWindowResolveFailure.SearchAborted;
-                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch, TheMethod, TheFindAllElapsedMs);
                 return $"Element search in window {InWindow.ToInt64()} was aborted after {_MAX_VISITED_ELEMENTS} elements; narrow the selector " +
                     $"(criteria: {InSelector.Describe()})";
             }
             if (TheMatches.Count == 0)
             {
                 OutFailure = UiWindowResolveFailure.NotFound;
-                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, 0, TheStopwatch);
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, 0, TheStopwatch, TheMethod, TheFindAllElapsedMs);
                 return $"Element with {InSelector.Describe()} not found in window {InWindow.ToInt64()}";
             }
 
@@ -472,7 +514,7 @@ namespace VsMcp.Extension.Tools
                         ? $"at least {_MAX_INDEXED_CANDIDATES}"
                         : TheMatches.Count.ToString();
                     OutFailure = UiWindowResolveFailure.IndexOutOfRange;
-                    EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
+                    EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch, TheMethod, TheFindAllElapsedMs);
                     return $"Element index {InSelector.Index.Value} is out of range: {TheMatchCountText} element(s) match {InSelector.Describe()} in window {InWindow.ToInt64()}";
                 }
                 TheSelected = TheMatches[InSelector.Index.Value];
@@ -488,7 +530,7 @@ namespace VsMcp.Extension.Tools
                 }
                 string TheCountText = TheMatches.Count > _MAX_AMBIGUOUS_CANDIDATES ? $"more than {_MAX_AMBIGUOUS_CANDIDATES}" : TheMatches.Count.ToString();
                 OutFailure = UiWindowResolveFailure.Ambiguous;
-                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch, TheMethod, TheFindAllElapsedMs);
                 return $"{TheCountText} elements match {InSelector.Describe()} in window {InWindow.ToInt64()}. " +
                     "Add more selector criteria (automationId / name / controlType / className) or pass 'index' to pick one. Candidates:\n" +
                     JsonConvert.SerializeObject(TheCandidates, Formatting.Indented);
@@ -503,13 +545,13 @@ namespace VsMcp.Extension.Tools
             if (TheRootHandle == 0)
             {
                 OutFailure = UiWindowResolveFailure.OtherWindow;
-                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch, TheMethod, TheFindAllElapsedMs);
                 return $"Element with {InSelector.Describe()} has no resolvable top-level window (no ancestor exposes a native window handle); refusing to act on it";
             }
             if (TheRootHandle != InWindow.ToInt64())
             {
                 OutFailure = UiWindowResolveFailure.OtherWindow;
-                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch, TheMethod, TheFindAllElapsedMs);
                 return $"Element with {InSelector.Describe()} belongs to window {TheRootHandle}, not to the requested window {InWindow.ToInt64()}; refusing to act on it";
             }
 
@@ -528,11 +570,121 @@ namespace VsMcp.Extension.Tools
             catch (ElementNotAvailableException)
             {
                 OutFailure = UiWindowResolveFailure.Disappeared;
-                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
+                EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch, TheMethod, TheFindAllElapsedMs);
                 return $"Element with {InSelector.Describe()} disappeared while it was being resolved";
             }
-            EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch);
+            EmitResolve(InWindow, InSelector, OutFailure, TheVisitedCount, TheMatches.Count, TheStopwatch, TheMethod, TheFindAllElapsedMs);
             return null;
+        }
+
+        /// <summary>
+        /// Extended: FindAll の高速経路を使うセレクターか。automationId か name の指定があり、index が無いときだけ使う
+        /// （TryResolveSingle のセレクターは常に Exact）。controlType / className だけの指定は一致する要素が多く、
+        /// FindAll の後に従来の走査へ回ることが多いので、最初から従来の走査を使う。index 指定は FindAll の返却順に依存させない。
+        /// </summary>
+        /// <param name="InSelector">セレクター。</param>
+        /// <returns>高速経路を試すなら true。</returns>
+        private static bool CanUseFindAllPath(UiWindowElementSelector InSelector)
+        {
+            return !InSelector.Index.HasValue
+                && (!string.IsNullOrEmpty(InSelector.AutomationId) || !string.IsNullOrEmpty(InSelector.Name));
+        }
+
+        /// <summary>
+        /// Extended: セレクターを PropertyCondition の AndCondition に変換する（コントロールビューの要素に限定）。
+        /// 文字列は PropertyCondition の既定フラグ（大文字小文字を区別する完全一致）で、MatchString の Exact（ordinal 比較）と同じ意味になる。
+        /// ControlType は MatchesCriteria の Equals(Current.ControlType, 指定値) と同じ ControlType 同士の一致。
+        /// 空文字・未指定の条件は HasCriteria / ToCriteria と同様に条件へ加えない。IsControlElement=true の条件は UiPopupMenuResolver の FindAll と同じ書き方。
+        /// </summary>
+        /// <param name="InSelector">セレクター（HasCriteria が true であること）。</param>
+        /// <returns>FindAll に渡す条件。</returns>
+        private static Condition BuildFindAllCondition(UiWindowElementSelector InSelector)
+        {
+            List<Condition> TheConditions = new List<Condition>
+            {
+                new PropertyCondition(AutomationElement.IsControlElementProperty, true),
+            };
+            if (!string.IsNullOrEmpty(InSelector.AutomationId))
+            {
+                TheConditions.Add(new PropertyCondition(AutomationElement.AutomationIdProperty, InSelector.AutomationId));
+            }
+            if (!string.IsNullOrEmpty(InSelector.Name))
+            {
+                TheConditions.Add(new PropertyCondition(AutomationElement.NameProperty, InSelector.Name));
+            }
+            if (!string.IsNullOrEmpty(InSelector.ClassName))
+            {
+                TheConditions.Add(new PropertyCondition(AutomationElement.ClassNameProperty, InSelector.ClassName));
+            }
+            if (InSelector.ControlType != null)
+            {
+                TheConditions.Add(new PropertyCondition(AutomationElement.ControlTypeProperty, InSelector.ControlType));
+            }
+            return new AndCondition(TheConditions.ToArray());
+        }
+
+        /// <summary>
+        /// Extended: FindAll(TreeScope.Subtree) を 1 回だけ呼んで候補を集める高速経路。TreeWalker で 1 要素ずつ属性を読む従来の走査
+        /// （1 要素あたり約 5 回のプロセス間呼び出し）を避ける。結果には CollectMatches と同じ順序で「IsOffscreen の除外（InIsOffscreenIncluded が false のとき）」
+        /// →「所属トップレベル HWND の一致」を適用する。結論が出る 0 件または 1 件のときだけ true を返し、2 件目を見つけた時点で打ち切って false を返す
+        /// （曖昧エラーの候補順と index の採番を FindAll の返却順に依存させず、従来の走査に任せるため）。FindAll が例外を投げたときも false。
+        /// 結果は InOutResults へ true のときだけ追加する。STA スレッドで呼ぶこと。
+        /// </summary>
+        /// <param name="InRoot">検索の起点（自身を含む）。</param>
+        /// <param name="InSelector">セレクター（Exact のみ、index なし）。</param>
+        /// <param name="InRequiredRootHandle">結果に含める要素の所属トップレベル HWND（10 進）。0 なら所属を判定しない。</param>
+        /// <param name="InIsOffscreenIncluded">IsOffscreen の要素も含めるか。</param>
+        /// <param name="InOutResults">結論が出たときの候補（0 件または 1 件）を追加するリスト。</param>
+        /// <returns>0 件または 1 件で結論が出たら true。従来の走査へ進むべきなら false。</returns>
+        private static bool TryCollectMatchesWithFindAll(AutomationElement InRoot, UiWindowElementSelector InSelector, long InRequiredRootHandle,
+            bool InIsOffscreenIncluded, List<AutomationElement> InOutResults)
+        {
+            AutomationElementCollection TheFound;
+            try
+            {
+                TheFound = InRoot.FindAll(TreeScope.Subtree, BuildFindAllCondition(InSelector));
+            }
+            catch
+            {
+                // FindAll が失敗した（要素が消えた・プロバイダーの例外）ときは、従来の走査に判断を任せる
+                return false;
+            }
+
+            List<AutomationElement> TheAccepted = new List<AutomationElement>();
+            foreach (AutomationElement TheElement in TheFound)
+            {
+                if (!InIsOffscreenIncluded && IsOffscreenOrUnreadable(TheElement))
+                {
+                    continue;
+                }
+                if (InRequiredRootHandle != 0 && ResolveTopLevelHandle(TheElement) != InRequiredRootHandle)
+                {
+                    // 別のトップレベルウィンドウがホストする要素（所属不明の 0 を含む）は候補に入れない
+                    continue;
+                }
+                TheAccepted.Add(TheElement);
+                if (TheAccepted.Count > 1)
+                {
+                    return false;
+                }
+            }
+            InOutResults.AddRange(TheAccepted);
+            return true;
+        }
+
+        /// <summary>Extended: 要素が IsOffscreen か、読み取り中に消えて判定できないかを調べる（CollectMatches の除外と同じ扱い）。</summary>
+        /// <param name="InElement">対象要素。</param>
+        /// <returns>IsOffscreen が true、または読み取れなければ true。</returns>
+        private static bool IsOffscreenOrUnreadable(AutomationElement InElement)
+        {
+            try
+            {
+                return InElement.Current.IsOffscreen;
+            }
+            catch
+            {
+                return true;
+            }
         }
 
         /// <summary>
@@ -545,8 +697,10 @@ namespace VsMcp.Extension.Tools
         /// <param name="InVisitedCount">走査した要素数。走査前に失敗した場合は 0。</param>
         /// <param name="InMatchCount">条件に一致した要素数（上限で打ち切った場合はその時点の数）。</param>
         /// <param name="InStopwatch">解決の入口から計測している Stopwatch。</param>
+        /// <param name="InMethod">Extended: 解決に使った経路（findAll / treeWalker / findAllThenTreeWalker）。検索を始める前に失敗した場合は null（method を載せない）。</param>
+        /// <param name="InFindAllElapsedMs">Extended: findAllThenTreeWalker のときに FindAll の試行にかかった時間（ミリ秒）。それ以外は null（載せない）。</param>
         private static void EmitResolve(IntPtr InWindow, UiWindowElementSelector InSelector, UiWindowResolveFailure InFailure,
-            int InVisitedCount, int InMatchCount, Stopwatch InStopwatch)
+            int InVisitedCount, int InMatchCount, Stopwatch InStopwatch, string InMethod = null, long? InFindAllElapsedMs = null)
         {
             if (!DiagnosticHub.IsEnabled(DiagnosticLevel.Verbose))
             {
@@ -563,6 +717,15 @@ namespace VsMcp.Extension.Tools
                 InData["failure"] = InFailure.ToString();
                 // TryResolveSingle は ControlView 固定で走査するので、view は常に control
                 InData["view"] = "control";
+                if (InMethod != null)
+                {
+                    // Extended: 高速経路（findAll）のとき visitedCount は -1（UIA プロバイダー側の走査で数えられない）
+                    InData["method"] = InMethod;
+                }
+                if (InFindAllElapsedMs.HasValue)
+                {
+                    InData["findAllElapsedMs"] = InFindAllElapsedMs.Value;
+                }
                 // Phase 10 の引数サマリーと同じ方針: AutomationId / ClassName / ControlType はそのまま、Name は有無と長さだけ
                 InData["automationId"] = InSelector.AutomationId;
                 InData["className"] = InSelector.ClassName;

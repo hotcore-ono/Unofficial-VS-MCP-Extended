@@ -76,7 +76,7 @@ Visual Studio の実行中でも外部から読める。
 | modal | `modal.evaluate` / `modal.block`(warning) | targetHandle / isBlocked / blockingHandle / reason |
 | geometry | `geometry.resolve`(verbose) | handle / dpi / monitorName / bounds |
 | uia | `uia.search.start` / `.end` / `.truncated`(warning) / `.timeout`(warning) | view / maxVisited / visitedCount / resultCount / selectorSummary |
-| uia | `uia.resolve`(verbose) | windowHandle / visitedCount / elapsedMs / matchCount / failure / view / automationId / className / controlType / index / hasName / nameLength |
+| uia | `uia.resolve`(verbose) | windowHandle / visitedCount / elapsedMs / matchCount / failure / view / method / findAllElapsedMs / automationId / className / controlType / index / hasName / nameLength |
 | interaction | `interaction.prepare`（成功は verbose・失敗は warning） | rootWindowHandle / automationId / className / elementControlType / hasName / index / bounds / point / role / isPhysical / failure |
 | interaction | `interaction.execute.end` | actualMethod（戻り値が実際の操作方式を返す Tool のみ） |
 | input | `input.keyboard` / `input.mouse` | requestedEventCount / insertedEventCount / win32Error / foreground の変化 |
@@ -97,6 +97,11 @@ Visual Studio の実行中でも外部から読める。
 セレクターは `uia.search.start` の `selectorSummary` と同じ方針で、`automationId` / `className` / `controlType` /
 `index` はそのまま、Name は `hasName` / `nameLength` だけを出し、本文は `includeUiText=true` のときに限り `name` に載せる。
 `verbose` が無効なときは判定 1 回だけで戻り、data の組み立ても行わない。
+
+`method` は要素の探し方で、`findAll`（`FindAll(TreeScope.Subtree)` を 1 回呼ぶ高速経路。automationId か name を指定し、index が無いときに試す）/
+`treeWalker`（従来の `TreeWalker` による走査）/ `findAllThenTreeWalker`（高速経路を試したが 2 件以上見つかった等で結論が出ず、従来の走査で解決した）の 3 種類。
+**`visitedCount = -1` は `findAll` 経路**（UIA プロバイダー側で走査するため訪問数を数えられない）を表す。`findAllThenTreeWalker` のときの `visitedCount` は従来の走査の実数で、
+高速経路の試行にかかった時間は `findAllElapsedMs`（ミリ秒）に載る。検索を始める前に失敗した場合（`NoCriteria` / `RootUnavailable`）は `method` を載せない。
 
 writer 障害（`diagnostics.writer.failure`）は JSONL に残らない。writer 自身が書けなくなった状態なので、
 記録は Output pane の 1 行 `diagnostics.writer.failure …` と `diagnostics_get_status` の `writerHealthy=false` だけになる。

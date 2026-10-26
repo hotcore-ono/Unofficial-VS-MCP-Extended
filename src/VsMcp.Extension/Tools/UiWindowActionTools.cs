@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Automation;
 using Newtonsoft.Json.Linq;
@@ -42,6 +43,12 @@ namespace VsMcp.Extension.Tools
         /// <summary>Extended: 座標指定の ScrollPattern 提供元探索でたどる要素数の上限。</summary>
         private const int _MAX_SCROLL_SEARCH_ELEMENTS = 2000;
 
+        /// <summary>Extended: ScrollIntoView の後に IsOffscreen / Bounds を読み直す間隔（ミリ秒）。</summary>
+        private const int _SCROLL_SETTLE_INTERVAL_MS = 50;
+
+        /// <summary>Extended: ScrollIntoView の後に IsOffscreen / Bounds を読む回数の上限。</summary>
+        private const int _SCROLL_SETTLE_MAX_READS = 5;
+
         /// <summary>ツールをレジストリへ登録する。VsMcpPackage.RegisterTools から呼ばれる。</summary>
         /// <param name="InRegistry">登録先レジストリ。</param>
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
@@ -63,8 +70,13 @@ namespace VsMcp.Extension.Tools
                     "(modal dialog, owned window, main window). " + TheSelectorDescription +
                     "Execution order is the same as ui_click: UIA InvokePattern first (no cursor movement), " +
                     "then SelectionItemPattern.Select for selectable items such as TabItem / ListItem (no cursor movement; reports method 'selectionItemPattern' " +
-                    "with 'alreadySelected' and 'verified' after reading the selection state back), then a physical click at the element center, which is " +
-                    "performed only if the point lies inside the target window's rectangle and is not covered by another window. " + TheSafetyDescription +
+                    "with 'alreadySelected' and 'verified' after reading the selection state back), then TogglePattern.Toggle for CheckBox / ToggleButton " +
+                    "(method 'togglePattern') and ExpandCollapsePattern for ComboBox / Expander (method 'expandCollapsePattern': Collapsed or PartiallyExpanded is " +
+                    "expanded, Expanded is collapsed), both without cursor movement and reporting the state before / after with 'verified'. Then, if the element is " +
+                    "offscreen or its center lies outside the window and it supports ScrollItemPattern, it is scrolled into view first ('scrolledIntoView': true), " +
+                    "and finally a physical click at the element center, which is " +
+                    "performed only if the point lies inside the target window's rectangle and is not covered by another window. " +
+                    "If UI Automation times out, the error ends with '(stage: <last stage>)'; no further pattern or input is started after the 30 second deadline. " + TheSafetyDescription +
                     "For MessageBox / TaskDialog / file dialog buttons prefer standard_dialog_execute / standard_file_dialog_*. " +
                     "For a popup / context menu item prefer ui_menu_select; for keyboard input prefer ui_window_send_keys.",
                     SchemaBuilder.Create()
@@ -195,12 +207,13 @@ namespace VsMcp.Extension.Tools
         /// <param name="InSelector">要素セレクター。</param>
         /// <param name="InIsPhysical">物理入力（座標）を伴う操作か。</param>
         /// <param name="InRole">エラーメッセージの接頭辞（"Drag source" 等）。空なら付けない。</param>
+        /// <param name="InToken">Extended: 要素検索へ渡す締め切り（UIA の 30 秒タイムアウトと同じ）。</param>
         /// <param name="OutContext">生成した Interaction Context。エラー時は null のことがある。</param>
         /// <param name="OutElement">解決した要素。</param>
         /// <param name="OutFailure">要素を解決できなかった理由。要素解決まで到達しなかった場合と正常時は None。</param>
-        /// <returns>エラーメッセージ。正常なら null。</returns>
+        /// <returns>エラーメッセージ。正常なら null。NotFound でウィンドウが popup menu のときは末尾に ui_menu_* の案内が付く。</returns>
         private static string PrepareElementAction(IntPtr InWindow, HashSet<uint> InProcessIds, UiWindowElementSelector InSelector, bool InIsPhysical, string InRole,
-            out UiInteractionContext OutContext, out UiWindowResolvedElement OutElement, out UiWindowResolveFailure OutFailure)
+            CancellationToken InToken, out UiInteractionContext OutContext, out UiWindowResolvedElement OutElement, out UiWindowResolveFailure OutFailure)
         {
             OutElement = null;
             OutFailure = UiWindowResolveFailure.None;
@@ -209,7 +222,44 @@ namespace VsMcp.Extension.Tools
             {
                 return TheTargetError;
             }
-            return OutContext.ResolveElement(InSelector, InIsPhysical, InRole, out OutElement, out OutFailure);
+            string TheResolveError = OutContext.ResolveElement(InSelector, InIsPhysical, InRole, out OutElement, out OutFailure, InToken);
+            if (TheResolveError != null && OutFailure == UiWindowResolveFailure.NotFound)
+            {
+                // Extended: popup menu の HWND の UIA root は項目を公開しないことがあるので、見つからない理由を案内する（既存のエラー文は変えず末尾に足す）
+                return TheResolveError + DescribePopupMenuHint(OutContext.WindowInfo);
+            }
+            return TheResolveError;
+        }
+
+        /// <summary>
+        /// Extended: 要素が見つからなかった対象ウィンドウが popup menu（Win32 メニュー / WPF ContextMenu / 分類不能の popup）のときに、
+        /// ui_menu_get_info / ui_menu_select を使う案内文を返す。分類が失敗しても本来の NotFound エラーは変えない（案内を付けないだけ）。
+        /// win32Menu / wpfContextMenu は「is a popup menu」と断定し、項目を確認できない unknownPopupMenu は「may be a popup menu」とする。
+        /// 項目照会のリトライは無効にする（NotFound の応答を遅くしないため）。STA スレッドで呼ぶこと。
+        /// 注意: Classify が Owner の部分木から項目を拾う経路（WPF の再利用された popup）では、Classify 自身が menu.fallback の Warning を
+        /// 記録しエラーダンプを予約する。Classify にはこれを抑止する手段が無く、案内を付けるときにも同じ診断が出る。
+        /// </summary>
+        /// <param name="InWindowInfo">要素を探したウィンドウの情報。</param>
+        /// <returns>エラー文の末尾へ足す案内文。popup menu でなければ空文字。</returns>
+        private static string DescribePopupMenuHint(WindowInfo InWindowInfo)
+        {
+            try
+            {
+                if (UiPopupMenuResolver.Classify(InWindowInfo, false, out UiMenuInfo TheMenu, out _))
+                {
+                    // win32Menu / wpfContextMenu は内容で確認できたメニュー。unknownPopupMenu は項目を確認できない popup なので断定しない
+                    if (UiPopupMenuResolver.IsKnownMenuType(TheMenu.MenuType))
+                    {
+                        return $" (window {InWindowInfo.Handle} is a popup menu; use ui_menu_get_info / ui_menu_select)";
+                    }
+                    return $" (window {InWindowInfo.Handle} may be a popup menu; try ui_menu_get_info / ui_menu_select)";
+                }
+            }
+            catch
+            {
+                // 分類中にウィンドウが消えた等。案内は付けず、元の NotFound エラーだけを返す
+            }
+            return string.Empty;
         }
 
         /// <summary>戻り値用のウィンドウ要約。</summary>
@@ -230,13 +280,17 @@ namespace VsMcp.Extension.Tools
         }
 
         /// <summary>
-        /// ui_window_click の本体。InvokePattern → SelectionItemPattern → 物理クリック（座標ゲート付き）の順。
+        /// ui_window_click の本体。InvokePattern → SelectionItemPattern → TogglePattern → ExpandCollapsePattern → 物理クリック（座標ゲート付き）の順。
         /// Extended: Invoke を持たない選択項目（TabItem / ListItem など）は物理クリックの前に SelectionItemPattern で選ぶ
         /// （物理クリックはヒットテストの都合で「成功したのに選択が変わらない」ことがあるため）。
+        /// 同様に CheckBox / ToggleButton は TogglePattern、ComboBox / Expander は ExpandCollapsePattern で操作し、
+        /// 物理クリックへ進む場合も、画面外の要素は先に ScrollItemPattern.ScrollIntoView で表示範囲へ入れる。
+        /// 要素検索・パターン実行・物理入力は 30 秒の締め切り（UiActionProgress）を確認し、過ぎていれば実行せずタイムアウトとして段階付きで返す。
         /// </summary>
         /// <param name="InAccessor">DTE / UI スレッドアクセサ。</param>
         /// <param name="InArgs">ツール引数。</param>
-        /// <returns>text（message / method / window / element / clickX / clickY、SelectionItemPattern のときは alreadySelected / verified）、またはエラー。</returns>
+        /// <returns>text（message / method / window / element / clickX / clickY、SelectionItemPattern のときは alreadySelected / verified、
+        /// TogglePattern / ExpandCollapsePattern のときは状態の前後と verified、ScrollIntoView したときは scrolledIntoView）、またはエラー。</returns>
         private static async Task<McpToolResult> UiWindowClickAsync(VsServiceAccessor InAccessor, JObject InArgs)
         {
             (IntPtr TheWindow, HashSet<uint> TheProcessIds, McpToolResult TheError) = await UiWindowUiaTools.ResolveWindowWithProcessesAsync(InAccessor, InArgs);
@@ -253,70 +307,73 @@ namespace VsMcp.Extension.Tools
             bool IsInputBlocked = InArgs.Value<bool?>("blockInput") ?? false;
 
             McpToolResult TheResult;
+            // Extended: 締め切り（UIA の 30 秒タイムアウトと同じ）と段階の記録。ラムダの外に置き、TimeoutException の文末に段階を付ける
+            UiActionProgress TheProgress = new UiActionProgress();
             try
             {
-                TheResult = await UiTools.RunUiaWithTimeoutAsync(() =>
+                // Extended: STA 側で締め切りに達した TimeoutException は RunUiaAsync が段階付きのエラー結果へ変換する
+                TheResult = await TheProgress.RunUiaAsync(() =>
                 {
-                    string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, false, null,
+                    string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, false, null, TheProgress.Token,
                         out UiInteractionContext TheContext, out UiWindowResolvedElement TheElement, out _);
+                    // Extended: 締め切り後に解決が終わった場合は、その結果（エラーを含む）を使わず TimeoutException にする
+                    TheProgress.ThrowIfExpired();
                     if (TheActionError != null)
                     {
                         return McpToolResult.Error(TheActionError);
                     }
                     WindowInfo TheWindowInfo = TheContext.WindowInfo;
 
-                    if (TheElement.Element.TryGetCurrentPattern(InvokePattern.Pattern, out object TheInvoke))
+                    // Extended: Invoke → SelectionItem → Toggle → ExpandCollapse の順に試す（どれもカーソルを動かさない）
+                    McpToolResult ThePatternResult = TryClickWithPatterns(TheElement, TheSelector, TheWindowInfo, TheProgress);
+                    if (ThePatternResult != null)
                     {
-                        ((InvokePattern)TheInvoke).Invoke();
-                        return McpToolResult.Success(new
-                        {
-                            message = $"Clicked element with {TheSelector.Describe()} in window {TheWindowInfo.Handle} using InvokePattern",
-                            method = "invokePattern",
-                            window = DescribeWindow(TheWindowInfo),
-                            element = TheElement.Info,
-                        });
+                        return ThePatternResult;
                     }
 
-                    // Extended: Invoke を持たない選択項目は物理クリックより先に SelectionItemPattern で選ぶ（カーソルを動かさない）
-                    McpToolResult TheSelectionResult = TrySelectElementWithSelectionItemPattern(TheElement, TheSelector, TheWindowInfo);
-                    if (TheSelectionResult != null)
+                    // Extended: 画面外（または窓の外）の要素は、物理クリックの座標ゲートで拒否される前に ScrollItemPattern で表示範囲へ入れる
+                    TheProgress.Enter("scrollIntoView");
+                    bool IsScrolledIntoView = TryScrollElementIntoView(TheElement, TheContext.Window, TheProgress, out bool IsGeometrySettled);
+                    if (IsScrolledIntoView && !IsGeometrySettled && !TheElement.IsOffscreen)
                     {
-                        return TheSelectionResult;
+                        // Extended: スクロール直後で座標がまだ動いている要素は、クリック位置がずれるので物理クリックしない（IsOffscreen のままなら下の前提確認に任せる）
+                        return McpToolResult.Error($"Element with {TheSelector.Describe()} is not stable: geometry did not settle within "
+                            + $"{(_SCROLL_SETTLE_MAX_READS - 1) * _SCROLL_SETTLE_INTERVAL_MS} ms after ScrollIntoView" + DescribeScrollAttempt(IsScrolledIntoView));
                     }
 
                     string TheBoundsError = UiInteractionContext.DescribePhysicalPrerequisite(TheElement, TheSelector);
                     if (TheBoundsError != null)
                     {
-                        return McpToolResult.Error("Element does not support InvokePattern and a physical click is not possible: " + TheBoundsError);
+                        return McpToolResult.Error("Element does not support InvokePattern and a physical click is not possible: " + TheBoundsError
+                            + DescribeScrollAttempt(IsScrolledIntoView));
                     }
                     int TheClickX = TheElement.CenterX;
                     int TheClickY = TheElement.CenterY;
                     TheContext.RefreshGeometry();
+                    TheProgress.Enter("physicalClick");
                     string ThePointError = TheContext.PreparePhysicalPoint(TheClickX, TheClickY, "click point");
                     if (ThePointError != null)
                     {
-                        return McpToolResult.Error(ThePointError);
+                        return McpToolResult.Error(ThePointError + DescribeScrollAttempt(IsScrolledIntoView));
                     }
 
+                    // Extended: 座標ゲートの前面化待ちの間に締め切りを過ぎていたら、物理入力は注入しない
+                    TheProgress.ThrowIfExpired();
                     PerformMouseInput("click", TheClickX, TheClickY, IsInputBlocked, () => UiTools.PerformClick(TheClickX, TheClickY, IsCursorRestored));
-                    return McpToolResult.Success(new
-                    {
-                        message = $"Clicked element with {TheSelector.Describe()} in window {TheWindowInfo.Handle} at ({TheClickX}, {TheClickY})",
-                        method = "physicalClick",
-                        window = DescribeWindow(TheWindowInfo),
-                        element = TheElement.Info,
-                        clickX = TheClickX,
-                        clickY = TheClickY,
-                    });
+                    return BuildPhysicalClickResult(TheSelector, TheWindowInfo, TheElement, TheClickX, TheClickY, IsScrolledIntoView);
                 });
             }
             catch (TimeoutException TheException)
             {
-                return McpToolResult.Error(TheException.Message);
+                return McpToolResult.Error(TheProgress.CancelAndDescribeTimeout(TheException));
             }
             catch (Exception TheException)
             {
                 return McpToolResult.Error($"ui_window_click failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
+            }
+            finally
+            {
+                TheProgress.Dispose();
             }
 
             if (!TheResult.IsError)
@@ -327,17 +384,105 @@ namespace VsMcp.Extension.Tools
         }
 
         /// <summary>
-        /// Extended: Invoke を持たない選択項目（TabItem / ListItem など）を SelectionItemPattern.Select で選ぶ。
-        /// 既に選択済みなら Select を呼ばずに成功扱いとし（alreadySelected = true）、Select したときは IsSelected を読み直して
-        /// 選択が切り替わったことを確認する（verified = true）。パターン非対応・例外・選択状態が変わらない場合は null を返し、
-        /// 呼び出し元は従来どおり物理クリックへ落ちる。
+        /// Extended: ui_window_click の物理クリック成功時の戻り値を組み立てる。ScrollItemPattern.ScrollIntoView を実行したときだけ
+        /// scrolledIntoView = true を足す（実行しなければ従来の JSON と同一）。
+        /// </summary>
+        /// <param name="InSelector">要素セレクター（メッセージ用）。</param>
+        /// <param name="InWindowInfo">対象ウィンドウの情報。</param>
+        /// <param name="InElement">クリックした要素（ScrollIntoView 後は読み直した情報）。</param>
+        /// <param name="InClickX">クリックしたスクリーン X（物理 px）。</param>
+        /// <param name="InClickY">クリックしたスクリーン Y（物理 px）。</param>
+        /// <param name="InIsScrolledIntoView">物理クリックの前に ScrollIntoView を実行したか。</param>
+        /// <returns>message / method / window / element / clickX / clickY（と scrolledIntoView）を持つ成功結果。</returns>
+        private static McpToolResult BuildPhysicalClickResult(UiWindowElementSelector InSelector, WindowInfo InWindowInfo, UiWindowResolvedElement InElement,
+            int InClickX, int InClickY, bool InIsScrolledIntoView)
+        {
+            Dictionary<string, object> TheClickResult = new Dictionary<string, object>
+            {
+                ["message"] = $"Clicked element with {InSelector.Describe()} in window {InWindowInfo.Handle} at ({InClickX}, {InClickY})",
+                ["method"] = "physicalClick",
+                ["window"] = DescribeWindow(InWindowInfo),
+                ["element"] = InElement.Info,
+                ["clickX"] = InClickX,
+                ["clickY"] = InClickY,
+            };
+            if (InIsScrolledIntoView)
+            {
+                TheClickResult["scrolledIntoView"] = true;
+            }
+            return McpToolResult.Success(TheClickResult);
+        }
+
+        /// <summary>
+        /// Extended: ui_window_click の「ScrollIntoView と物理クリックより前」のパターン連鎖。InvokePattern → SelectionItemPattern →
+        /// TogglePattern → ExpandCollapsePattern の順に試し、最初に成功したものの結果を返す（どれもカーソルを動かさない）。
+        /// 全て使えなければ null で、呼び出し元は ScrollIntoView と物理クリックへ進む。各段階に入る前に締め切りを確認し、過ぎていれば
+        /// TimeoutException を投げる。Invoke が例外を投げたときは従来どおり呼び出し元へ伝える（物理クリックへは落とさない）。
+        /// Invoke を持たない選択項目（TabItem / ListItem など）は SelectionItem、CheckBox / ToggleButton は Toggle、ComboBox / Expander は ExpandCollapse で扱う。
         /// </summary>
         /// <param name="InElement">解決済みの要素（安全境界の確認後）。</param>
         /// <param name="InSelector">要素セレクター（メッセージ用）。</param>
         /// <param name="InWindowInfo">対象ウィンドウの情報（メッセージ・戻り値用）。</param>
-        /// <returns>選択できた場合の成功結果。物理クリックへ落ちる場合は null。</returns>
+        /// <param name="InProgress">締め切りと段階の記録。</param>
+        /// <returns>パターンで操作できた場合の成功結果。どのパターンでも操作できなかった場合は null。</returns>
+        private static McpToolResult TryClickWithPatterns(UiWindowResolvedElement InElement, UiWindowElementSelector InSelector, WindowInfo InWindowInfo,
+            UiActionProgress InProgress)
+        {
+            if (InElement.Element.TryGetCurrentPattern(InvokePattern.Pattern, out object TheInvoke))
+            {
+                InProgress.Enter("invokePattern");
+                ((InvokePattern)TheInvoke).Invoke();
+                return McpToolResult.Success(new
+                {
+                    message = $"Clicked element with {InSelector.Describe()} in window {InWindowInfo.Handle} using InvokePattern",
+                    method = "invokePattern",
+                    window = DescribeWindow(InWindowInfo),
+                    element = InElement.Info,
+                });
+            }
+
+            InProgress.Enter("selectionItemPattern");
+            McpToolResult TheSelectionResult = TrySelectElementWithSelectionItemPattern(InElement, InSelector, InWindowInfo, InProgress);
+            if (TheSelectionResult != null)
+            {
+                return TheSelectionResult;
+            }
+
+            InProgress.Enter("togglePattern");
+            McpToolResult TheToggleResult = TryToggleElementWithTogglePattern(InElement, InSelector, InWindowInfo, InProgress);
+            if (TheToggleResult != null)
+            {
+                return TheToggleResult;
+            }
+
+            InProgress.Enter("expandCollapsePattern");
+            return TryExpandCollapseElementWithPattern(InElement, InSelector, InWindowInfo, InProgress);
+        }
+
+        /// <summary>
+        /// Extended: 物理クリックの前に ScrollItemPattern.ScrollIntoView を実行したのに、その後のゲートで失敗したときに、
+        /// エラー文の末尾へ足す補足を返す（スクロールという副作用が起きたことを呼び出し側に伝える）。
+        /// </summary>
+        /// <param name="InIsScrolledIntoView">ScrollIntoView を実行したか。</param>
+        /// <returns>補足文。実行していなければ空文字。</returns>
+        private static string DescribeScrollAttempt(bool InIsScrolledIntoView)
+        {
+            return InIsScrolledIntoView ? " (ScrollItemPattern.ScrollIntoView was called but the element is still not clickable)" : string.Empty;
+        }
+
+        /// <summary>
+        /// Extended: Invoke を持たない選択項目（TabItem / ListItem など）を SelectionItemPattern.Select で選ぶ。
+        /// 既に選択済みなら Select を呼ばずに成功扱いとし（alreadySelected = true）、Select したときは IsSelected を読み直して
+        /// 選択が切り替わったことを確認する（verified = true）。パターン非対応・例外・選択状態が変わらない場合は null を返し、
+        /// 呼び出し元は次の方法へ進む。Select の直前に締め切りを確認し、過ぎていれば TimeoutException を投げる（null にはしない）。
+        /// </summary>
+        /// <param name="InElement">解決済みの要素（安全境界の確認後）。</param>
+        /// <param name="InSelector">要素セレクター（メッセージ用）。</param>
+        /// <param name="InWindowInfo">対象ウィンドウの情報（メッセージ・戻り値用）。</param>
+        /// <param name="InProgress">締め切りと段階の記録。</param>
+        /// <returns>選択できた場合の成功結果。次の方法へ進む場合は null。</returns>
         private static McpToolResult TrySelectElementWithSelectionItemPattern(UiWindowResolvedElement InElement, UiWindowElementSelector InSelector,
-            WindowInfo InWindowInfo)
+            WindowInfo InWindowInfo, UiActionProgress InProgress)
         {
             bool IsAlreadySelected;
             try
@@ -350,6 +495,7 @@ namespace VsMcp.Extension.Tools
                 IsAlreadySelected = TheSelectionItem.Current.IsSelected;
                 if (!IsAlreadySelected)
                 {
+                    InProgress.ThrowIfExpired();
                     TheSelectionItem.Select();
                     if (!TheSelectionItem.Current.IsSelected)
                     {
@@ -358,9 +504,9 @@ namespace VsMcp.Extension.Tools
                     }
                 }
             }
-            catch
+            catch (Exception TheException) when (!(TheException is TimeoutException))
             {
-                // パターンが使えない・要素が消えた・Select が拒否された場合は物理クリックへ落ちる
+                // パターンが使えない・要素が消えた・Select が拒否された場合は物理クリックへ落ちる（締め切りの TimeoutException は握らず呼び出し元へ伝える）
                 return null;
             }
 
@@ -375,6 +521,219 @@ namespace VsMcp.Extension.Tools
                 alreadySelected = IsAlreadySelected,
                 verified = true,
             });
+        }
+
+        /// <summary>
+        /// Extended: Invoke / SelectionItem を持たない CheckBox / ToggleButton を TogglePattern.Toggle で切り替える（カーソルを動かさない）。
+        /// 切り替わったことは ToggleState を読み直して確認し（verified）、前後の状態を返す。パターン非対応、または Toggle() が例外を投げた場合は
+        /// null を返し、呼び出し元は次の方法へ進む。Toggle() が例外なく戻った後は、状態が変わっていなくても null を返さない:
+        /// Toggle は非冪等なので、状態の反映が遅れただけの場合に物理クリックへ落とすと二重に切り替わってしまうため、verified=false で返して呼び出し側に確認させる。
+        /// </summary>
+        /// <param name="InElement">解決済みの要素（安全境界の確認後）。</param>
+        /// <param name="InSelector">要素セレクター（メッセージ用）。</param>
+        /// <param name="InWindowInfo">対象ウィンドウの情報（メッセージ・戻り値用）。</param>
+        /// <param name="InProgress">締め切りと段階の記録。Toggle() の直前に確認し、過ぎていれば TimeoutException を投げる（null にはしない）。</param>
+        /// <returns>Toggle() を実行した場合の結果。実行できなかった場合は null。</returns>
+        private static McpToolResult TryToggleElementWithTogglePattern(UiWindowResolvedElement InElement, UiWindowElementSelector InSelector,
+            WindowInfo InWindowInfo, UiActionProgress InProgress)
+        {
+            TogglePattern TheToggle;
+            ToggleState TheStateBefore;
+            try
+            {
+                if (!InElement.Element.TryGetCurrentPattern(TogglePattern.Pattern, out object ThePattern))
+                {
+                    return null;
+                }
+                TheToggle = (TogglePattern)ThePattern;
+                TheStateBefore = TheToggle.Current.ToggleState;
+                InProgress.ThrowIfExpired();
+                TheToggle.Toggle();
+            }
+            catch (Exception TheException) when (!(TheException is TimeoutException))
+            {
+                // パターンが使えない・要素が消えた・Toggle が拒否された場合は次の方法へ落ちる（締め切りの TimeoutException は握らず呼び出し元へ伝える）
+                return null;
+            }
+
+            ToggleState? TheStateAfter = null;
+            try
+            {
+                TheStateAfter = TheToggle.Current.ToggleState;
+            }
+            catch
+            {
+                // 切り替えは実行済み。読み直しだけが失敗した場合は verified=false で返す
+            }
+            bool IsVerified = TheStateAfter.HasValue && TheStateAfter.Value != TheStateBefore;
+            return McpToolResult.Success(new
+            {
+                message = IsVerified
+                    ? $"Toggled element with {InSelector.Describe()} in window {InWindowInfo.Handle} using TogglePattern ({TheStateBefore} -> {TheStateAfter.Value})"
+                    : $"Called TogglePattern.Toggle on element with {InSelector.Describe()} in window {InWindowInfo.Handle}, but the toggle state could not be confirmed as changed (was {TheStateBefore})",
+                method = "togglePattern",
+                window = DescribeWindow(InWindowInfo),
+                element = InElement.Info,
+                toggleStateBefore = TheStateBefore.ToString(),
+                toggleStateAfter = TheStateAfter.HasValue ? TheStateAfter.Value.ToString() : null,
+                verified = IsVerified,
+            });
+        }
+
+        /// <summary>
+        /// Extended: Invoke / SelectionItem / Toggle を持たない ComboBox / Expander を ExpandCollapsePattern で開閉する（カーソルを動かさない）。
+        /// 物理クリックと同じくクリックは開閉のトグルとして扱う: Collapsed と PartiallyExpanded は Expand()（完全に開く）、Expanded は Collapse()。
+        /// LeafNode（開閉できない）、パターン非対応、Expand / Collapse が例外を投げた場合は null を返し、呼び出し元は次の方法へ進む。
+        /// 実行後は ExpandCollapseState を読み直して確認する（verified）。実行が例外なく戻った後は、状態が変わっていなくても null を返さない
+        /// （開閉は非冪等で、物理クリックへ落とすと二重に切り替わるため。TryToggleElementWithTogglePattern と同じ理由）。
+        /// </summary>
+        /// <param name="InElement">解決済みの要素（安全境界の確認後）。</param>
+        /// <param name="InSelector">要素セレクター（メッセージ用）。</param>
+        /// <param name="InWindowInfo">対象ウィンドウの情報（メッセージ・戻り値用）。</param>
+        /// <param name="InProgress">締め切りと段階の記録。Expand() / Collapse() の直前に確認し、過ぎていれば TimeoutException を投げる（null にはしない）。</param>
+        /// <returns>Expand / Collapse を実行した場合の結果。実行できなかった場合は null。</returns>
+        private static McpToolResult TryExpandCollapseElementWithPattern(UiWindowResolvedElement InElement, UiWindowElementSelector InSelector,
+            WindowInfo InWindowInfo, UiActionProgress InProgress)
+        {
+            ExpandCollapsePattern TheExpandCollapse;
+            ExpandCollapseState TheStateBefore;
+            bool IsExpanding;
+            try
+            {
+                if (!InElement.Element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out object ThePattern))
+                {
+                    return null;
+                }
+                TheExpandCollapse = (ExpandCollapsePattern)ThePattern;
+                TheStateBefore = TheExpandCollapse.Current.ExpandCollapseState;
+                if (TheStateBefore == ExpandCollapseState.LeafNode)
+                {
+                    return null;
+                }
+                IsExpanding = TheStateBefore != ExpandCollapseState.Expanded;
+                InProgress.ThrowIfExpired();
+                if (IsExpanding)
+                {
+                    TheExpandCollapse.Expand();
+                }
+                else
+                {
+                    TheExpandCollapse.Collapse();
+                }
+            }
+            catch (Exception TheException) when (!(TheException is TimeoutException))
+            {
+                // パターンが使えない・要素が消えた・Expand / Collapse が拒否された場合は次の方法へ落ちる（締め切りの TimeoutException は握らず呼び出し元へ伝える）
+                return null;
+            }
+
+            ExpandCollapseState? TheStateAfter = null;
+            try
+            {
+                TheStateAfter = TheExpandCollapse.Current.ExpandCollapseState;
+            }
+            catch
+            {
+                // 開閉は実行済み。読み直しだけが失敗した場合は verified=false で返す
+            }
+            bool IsVerified = TheStateAfter.HasValue && TheStateAfter.Value != TheStateBefore;
+            string TheActionName = IsExpanding ? "Expanded" : "Collapsed";
+            return McpToolResult.Success(new
+            {
+                message = IsVerified
+                    ? $"{TheActionName} element with {InSelector.Describe()} in window {InWindowInfo.Handle} using ExpandCollapsePattern ({TheStateBefore} -> {TheStateAfter.Value})"
+                    : $"Called ExpandCollapsePattern.{(IsExpanding ? "Expand" : "Collapse")} on element with {InSelector.Describe()} in window {InWindowInfo.Handle}, but the state could not be confirmed as changed (was {TheStateBefore})",
+                method = "expandCollapsePattern",
+                window = DescribeWindow(InWindowInfo),
+                element = InElement.Info,
+                action = IsExpanding ? "expand" : "collapse",
+                expandCollapseStateBefore = TheStateBefore.ToString(),
+                expandCollapseStateAfter = TheStateAfter.HasValue ? TheStateAfter.Value.ToString() : null,
+                verified = IsVerified,
+            });
+        }
+
+        /// <summary>
+        /// Extended: 画面外（IsOffscreen）の要素、または中心点が対象ウィンドウの矩形の外にある要素を、ScrollItemPattern.ScrollIntoView で表示範囲へ入れ、
+        /// 解決済み要素の Bounds / IsOffscreen / Info を読み直す。表示範囲内、ScrollItemPattern 非対応、例外の場合は何もしない
+        /// （物理クリックが可能かどうかは、呼び出し元の既存ゲート DescribePhysicalPrerequisite / PreparePhysicalPoint が従来どおり判定する）。
+        /// bounds が無い要素は中心点を計算できないので、ScrollItemPattern があれば試す。
+        /// ScrollIntoView の直後はレイアウトが落ち着くまで IsOffscreen / Bounds が古い値のことがあるため、IsOffscreen を先に読んでから Bounds を読み、
+        /// 「IsOffscreen = false かつ Bounds が 2 回続けて同じ値」になるまで短い間隔で読み直す（上限に達したら最後の値で続行する）。
+        /// ScrollIntoView の呼び出し後に読み直しが例外で失敗した場合も、スクロールは実行済みなので true を返す
+        /// （呼び出し元が scrolledIntoView とエラー文の補足を付けられるように。このとき座標は落ち着いていないものとして扱う）。
+        /// ScrollIntoView の直前に締め切りを確認し、過ぎていれば TimeoutException を投げる（false にはしない）。
+        /// </summary>
+        /// <param name="InOutElement">解決済みの要素。スクロールしたときだけ Bounds / IsOffscreen / Info を更新する。</param>
+        /// <param name="InWindow">対象のトップレベル HWND（中心点が窓の外かどうかの判定に使う）。</param>
+        /// <param name="InProgress">締め切りと段階の記録。</param>
+        /// <param name="OutIsGeometrySettled">
+        /// スクロール後の IsOffscreen / Bounds が落ち着いたか（<see cref="ReadSettledGeometry"/> の結果）。スクロールしなかったときは true。
+        /// </param>
+        /// <returns>ScrollIntoView を呼んだら true（読み直しの失敗を含む）。</returns>
+        private static bool TryScrollElementIntoView(UiWindowResolvedElement InOutElement, IntPtr InWindow, UiActionProgress InProgress,
+            out bool OutIsGeometrySettled)
+        {
+            OutIsGeometrySettled = true;
+            bool IsScrollNeeded = InOutElement.IsOffscreen
+                || InOutElement.Bounds.IsEmpty
+                || UiTools.ValidateCoordinatesInWindow(InWindow, InOutElement.CenterX, InOutElement.CenterY) != null;
+            if (!IsScrollNeeded)
+            {
+                return false;
+            }
+
+            bool IsScrollCalled = false;
+            try
+            {
+                if (!InOutElement.Element.TryGetCurrentPattern(ScrollItemPattern.Pattern, out object ThePattern))
+                {
+                    return false;
+                }
+                InProgress.ThrowIfExpired();
+                ((ScrollItemPattern)ThePattern).ScrollIntoView();
+                IsScrollCalled = true;
+                OutIsGeometrySettled = false;   // 読み直しが終わるまでは、落ち着いたとは言えない
+                OutIsGeometrySettled = ReadSettledGeometry(InOutElement);
+                InOutElement.Info = UiWindowElementResolver.BuildElementInfo(InOutElement.Element, InOutElement.RootWindowHandle);
+                return true;
+            }
+            catch (Exception TheException) when (!(TheException is TimeoutException))
+            {
+                // パターンが使えない・要素が消えた・ScrollIntoView が拒否された場合は、従来どおり既存のゲートの判定に任せる（締め切りの TimeoutException は握らない）。
+                // ScrollIntoView の後に読み直しだけが失敗した場合は、スクロール済みなので true を返す
+                return IsScrollCalled;
+            }
+        }
+
+        /// <summary>
+        /// Extended: ScrollIntoView の直後に、要素の IsOffscreen と Bounds が落ち着くまで読み直して解決済み要素へ反映する。
+        /// 1 回の読み取りでは IsOffscreen を先に、Bounds を後に読む（Bounds が先だと、その間に動いた要素の IsOffscreen と食い違うため）。
+        /// _SCROLL_SETTLE_INTERVAL_MS 間隔で最大 _SCROLL_SETTLE_MAX_READS 回読み、「IsOffscreen = false かつ Bounds が前回と同じ」になれば終了する。
+        /// 上限に達したときは最後に読んだ値を反映して false を返す（呼び出し元が、座標が不安定なまま物理クリックしないかを判断する）。
+        /// </summary>
+        /// <param name="InOutElement">解決済みの要素。Bounds / IsOffscreen を更新する。</param>
+        /// <returns>上限までに「IsOffscreen = false かつ Bounds が前回と同じ」になったら true。落ち着かなかったら false。</returns>
+        private static bool ReadSettledGeometry(UiWindowResolvedElement InOutElement)
+        {
+            System.Windows.Rect? ThePreviousBounds = null;
+            for (int TheReadCount = 0; TheReadCount < _SCROLL_SETTLE_MAX_READS; TheReadCount++)
+            {
+                if (TheReadCount > 0)
+                {
+                    System.Threading.Thread.Sleep(_SCROLL_SETTLE_INTERVAL_MS);
+                }
+                bool IsOffscreen = InOutElement.Element.Current.IsOffscreen;
+                System.Windows.Rect TheBounds = InOutElement.Element.Current.BoundingRectangle;
+                InOutElement.IsOffscreen = IsOffscreen;
+                InOutElement.Bounds = TheBounds;
+                if (!IsOffscreen && ThePreviousBounds.HasValue && ThePreviousBounds.Value == TheBounds)
+                {
+                    return true;
+                }
+                ThePreviousBounds = TheBounds;
+            }
+            return false;
         }
 
         /// <summary>ui_window_double_click の本体。物理ダブルクリック（upstream PerformDoubleClick）のみ。</summary>
@@ -439,12 +798,17 @@ namespace VsMcp.Extension.Tools
             bool IsInputBlocked = InArgs.Value<bool?>("blockInput") ?? false;
 
             McpToolResult TheResult;
+            // Extended: 締め切り（UIA の 30 秒タイムアウトと同じ）と段階の記録。ラムダの外に置き、TimeoutException の文末に段階を付ける
+            UiActionProgress TheProgress = new UiActionProgress();
             try
             {
-                TheResult = await UiTools.RunUiaWithTimeoutAsync(() =>
+                // Extended: STA 側で締め切りに達した TimeoutException は RunUiaAsync が段階付きのエラー結果へ変換する
+                TheResult = await TheProgress.RunUiaAsync(() =>
                 {
-                    string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, true, null,
+                    string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, true, null, TheProgress.Token,
                         out UiInteractionContext TheContext, out UiWindowResolvedElement TheElement, out _);
+                    // Extended: 締め切り後に解決が終わった場合は、その結果（エラーを含む）を使わず TimeoutException にする
+                    TheProgress.ThrowIfExpired();
                     if (TheActionError != null)
                     {
                         return McpToolResult.Error(TheActionError);
@@ -454,6 +818,7 @@ namespace VsMcp.Extension.Tools
                     int TheX = TheElement.CenterX;
                     int TheY = TheElement.CenterY;
                     TheContext.RefreshGeometry();
+                    TheProgress.Enter(InMethodName);
                     string ThePointError = TheContext.PreparePhysicalPoint(TheX, TheY, InPointName);
                     if (ThePointError != null)
                     {
@@ -470,6 +835,8 @@ namespace VsMcp.Extension.Tools
                     POINT TheSavedCursor = new POINT();
                     bool HasSavedCursor = IsRestoredAfterObservation && TheContext.TrySaveCursor(out TheSavedCursor);
 
+                    // Extended: 座標ゲートの前面化待ちなどの間に締め切りを過ぎていたら、物理入力は注入しない
+                    TheProgress.ThrowIfExpired();
                     PerformMouseInput(InMethodName, TheX, TheY, IsInputBlocked, () => InPerform(TheX, TheY, IsCursorRestored && !IsRestoredAfterObservation));
 
                     List<object> TheNewWindows = null;
@@ -519,11 +886,15 @@ namespace VsMcp.Extension.Tools
             }
             catch (TimeoutException TheException)
             {
-                return McpToolResult.Error(TheException.Message);
+                return McpToolResult.Error(TheProgress.CancelAndDescribeTimeout(TheException));
             }
             catch (Exception TheException)
             {
                 return McpToolResult.Error($"{InToolName} failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
+            }
+            finally
+            {
+                TheProgress.Dispose();
             }
 
             if (!TheResult.IsError)
@@ -645,19 +1016,25 @@ namespace VsMcp.Extension.Tools
             bool IsCursorRestored = InArgs.Value<bool?>("restoreCursor") ?? true;
             bool IsInputBlocked = InArgs.Value<bool?>("blockInput") ?? false;
 
+            // Extended: 締め切り（UIA の 30 秒タイムアウトと同じ）と段階の記録。ラムダの外に置き、TimeoutException の文末に段階を付ける
+            UiActionProgress TheProgress = new UiActionProgress();
             try
             {
-                return await UiTools.RunUiaWithTimeoutAsync(() =>
+                // Extended: STA 側で締め切りに達した TimeoutException は RunUiaAsync が段階付きのエラー結果へ変換する
+                return await TheProgress.RunUiaAsync(() =>
                 {
-                    string TheSourceActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSourceSelector, true, "Drag source",
+                    string TheSourceActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSourceSelector, true, "Drag source", TheProgress.Token,
                         out UiInteractionContext TheContext, out UiWindowResolvedElement TheSource, out _);
+                    // Extended: 締め切り後に解決が終わった場合は、その結果（エラーを含む）を使わず TimeoutException にする
+                    TheProgress.ThrowIfExpired();
                     if (TheSourceActionError != null)
                     {
                         return McpToolResult.Error(TheSourceActionError);
                     }
                     WindowInfo TheWindowInfo = TheContext.WindowInfo;
                     string TheTargetResolveError = UiWindowElementResolver.TryResolveSingle(TheWindow, TheTargetSelector, out UiWindowResolvedElement TheTarget,
-                        out UiWindowResolveFailure TheTargetFailure);
+                        out UiWindowResolveFailure TheTargetFailure, TheProgress.Token);
+                    TheProgress.ThrowIfExpired();
                     if (TheTargetResolveError != null)
                     {
                         return McpToolResult.Error("Drag target: " + TheTargetResolveError + DescribeCrossWindowHint(TheTargetFailure));
@@ -677,6 +1054,7 @@ namespace VsMcp.Extension.Tools
                     int TheEndX = TheTarget.CenterX;
                     int TheEndY = TheTarget.CenterY;
                     TheContext.RefreshGeometry();
+                    TheProgress.Enter("physicalDrag");
                     string TheStartError = TheContext.PreparePhysicalPoint(TheStartX, TheStartY, "drag start point");
                     if (TheStartError != null)
                     {
@@ -688,6 +1066,8 @@ namespace VsMcp.Extension.Tools
                         return McpToolResult.Error(TheEndError);
                     }
 
+                    // Extended: 座標ゲートの前面化待ちの間に締め切りを過ぎていたら、物理入力は注入しない
+                    TheProgress.ThrowIfExpired();
                     PerformMouseInput("drag", TheStartX, TheStartY, IsInputBlocked, () => UiTools.PerformDrag(TheStartX, TheStartY, TheEndX, TheEndY, TheSteps, TheDelayMs, IsCursorRestored));
                     return McpToolResult.Success(new
                     {
@@ -707,11 +1087,15 @@ namespace VsMcp.Extension.Tools
             }
             catch (TimeoutException TheException)
             {
-                return McpToolResult.Error(TheException.Message);
+                return McpToolResult.Error(TheProgress.CancelAndDescribeTimeout(TheException));
             }
             catch (Exception TheException)
             {
                 return McpToolResult.Error($"ui_window_drag failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
+            }
+            finally
+            {
+                TheProgress.Dispose();
             }
         }
 
@@ -914,9 +1298,12 @@ namespace VsMcp.Extension.Tools
             }
 
             McpToolResult TheResult;
+            // Extended: 締め切り（UIA の 30 秒タイムアウトと同じ）と段階の記録。ラムダの外に置き、TimeoutException の文末に段階を付ける
+            UiActionProgress TheProgress = new UiActionProgress();
             try
             {
-                TheResult = await UiTools.RunUiaWithTimeoutAsync(() =>
+                // Extended: STA 側で締め切りに達した TimeoutException は RunUiaAsync が段階付きのエラー結果へ変換する
+                TheResult = await TheProgress.RunUiaAsync(() =>
                 {
                     UiInteractionContext TheContext;
                     WindowInfo TheWindowInfo;
@@ -927,13 +1314,17 @@ namespace VsMcp.Extension.Tools
 
                     if (TheSelector.HasCriteria)
                     {
-                        string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, false, null, out TheContext, out TheElement, out _);
+                        string TheActionError = PrepareElementAction(TheWindow, TheProcessIds, TheSelector, false, null, TheProgress.Token,
+                            out TheContext, out TheElement, out _);
+                        // Extended: 締め切り後に解決が終わった場合は、その結果（エラーを含む）を使わず TimeoutException にする
+                        TheProgress.ThrowIfExpired();
                         if (TheActionError != null)
                         {
                             return McpToolResult.Error(TheActionError);
                         }
                         TheWindowInfo = TheContext.WindowInfo;
 
+                        TheProgress.Enter("scrollPattern");
                         if (IsPatternUsed && UiTools.TryScrollWithPattern(TheElement.Element, TheClicks.Value, IsHorizontal))
                         {
                             return McpToolResult.Success(new
@@ -985,12 +1376,16 @@ namespace VsMcp.Extension.Tools
                     }
                     if (TheHwndAtPoint != IntPtr.Zero)
                     {
+                        // Extended: 締め切りを過ぎていたら、WM_MOUSEWHEEL の送信（入力）は始めない
+                        TheProgress.Enter("postMessageWheel");
                         // PostMessage は「送れた」だけで実際にスクロールしたとは限らない（WPF は無視することがある）。
                         // 送信前に検証用の ScrollPattern 提供元とスクロール位置を控えておき、送信後の変化で成否を判定する。
                         AutomationElement TheScrollProvider = FindScrollVerificationProvider(TheElement, TheWindow, TheX, TheY);
                         double TheScrollPercentBefore = ReadScrollPercent(TheScrollProvider, IsHorizontal);
                         bool IsScrollVerifiable = !double.IsNaN(TheScrollPercentBefore);
 
+                        // Extended: 検証用の ScrollPattern 提供元の探索・読み取りの間に締め切りを過ぎていたら、WM_MOUSEWHEEL は送信しない
+                        TheProgress.ThrowIfExpired();
                         int TheStep = TheClicks.Value > 0 ? 1 : -1;
                         int ThePosted = 0;
                         for (int TheIndex = 0; TheIndex < Math.Abs(TheClicks.Value); TheIndex++)
@@ -1035,11 +1430,14 @@ namespace VsMcp.Extension.Tools
                     }
 
                     TheContext.RefreshGeometry();
+                    TheProgress.Enter("physicalWheel");
                     string ThePointError = TheContext.PreparePhysicalPoint(TheX, TheY, "wheel point");
                     if (ThePointError != null)
                     {
                         return McpToolResult.Error(ThePointError);
                     }
+                    // Extended: 座標ゲートの前面化待ちの間に締め切りを過ぎていたら、物理入力は注入しない
+                    TheProgress.ThrowIfExpired();
                     PerformMouseInput("wheel", TheX, TheY, IsInputBlocked, () => UiTools.PerformWheel(TheX, TheY, TheClicks.Value, IsHorizontal, IsCursorRestored));
                     return McpToolResult.Success(new
                     {
@@ -1057,11 +1455,15 @@ namespace VsMcp.Extension.Tools
             }
             catch (TimeoutException TheException)
             {
-                return McpToolResult.Error(TheException.Message);
+                return McpToolResult.Error(TheProgress.CancelAndDescribeTimeout(TheException));
             }
             catch (Exception TheException)
             {
                 return McpToolResult.Error($"ui_window_mouse_wheel failed in window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
+            }
+            finally
+            {
+                TheProgress.Dispose();
             }
 
             if (!TheResult.IsError)

@@ -115,7 +115,7 @@ namespace VsMcp.Extension.Tools
                     "elements hosted by another top-level window (e.g. the Visual Studio in-app toolbar) are skipped and counted in 'skippedOtherWindows'. " +
                     "It works for modal dialogs, MessageBox / TaskDialog / file dialogs and owned windows. Same match modes as ui_find_elements ('exact' default, 'contains', " +
                     "'regex'). Each result carries nativeWindowHandle, isOffscreen, rootWindowHandle and the supported patterns (invoke, value, selectionItem, toggle, " +
-                    "expandCollapse, scroll) so it can be passed straight to ui_window_click / double_click / right_click / drag / mouse_wheel. For the buttons of a MessageBox / " +
+                    "expandCollapse, scroll, scrollItem) so it can be passed straight to ui_window_click / double_click / right_click / drag / mouse_wheel. For the buttons of a MessageBox / " +
                     "TaskDialog / file dialog prefer standard_dialog_execute / standard_file_dialog_* over generic clicks. The handle is validated first. " +
                     "The walk is bounded by 'maxVisited' (default 10000) in addition to the 30 second timeout, and 'view' selects the UI Automation tree view: " +
                     "'control' (default, the same elements as ui_find_elements) or 'raw', which also returns elements with IsControlElement=false (for example the " +
@@ -231,13 +231,17 @@ namespace VsMcp.Extension.Tools
                 return McpToolResult.Error(TheStateError);
             }
 
+            // Extended: タイムアウト時にどの段階で止まったかを文末へ付けるための記録（読み取り専用の操作なので、締め切り後に実行を止める対象は無い）
+            UiActionProgress TheProgress = new UiActionProgress();
             try
             {
-                return await UiTools.RunUiaWithTimeoutAsync(() =>
+                return await TheProgress.RunUiaAsync(() =>
                 {
+                    TheProgress.Enter("readingUiaRoot");
                     AutomationElement TheRoot = AutomationElement.FromHandle(TheWindow);
                     Dictionary<string, object> TheRootInfo = UiWindowElementResolver.BuildElementInfo(TheRoot, UiWindowElementResolver.ResolveTopLevelHandle(TheRoot));
 
+                    TheProgress.Enter("readingFocusedElement");
                     Dictionary<string, object> TheFocusedInfo = null;
                     long TheFocusedWindowHandle = 0;
                     try
@@ -257,6 +261,7 @@ namespace VsMcp.Extension.Tools
                         // フォーカス要素が取れない（フォーカスなし・消えた）場合は null のまま
                     }
 
+                    TheProgress.Enter("readingGeometry");
                     return McpToolResult.Success(new
                     {
                         window = TheWindowInfo,
@@ -272,11 +277,15 @@ namespace VsMcp.Extension.Tools
             }
             catch (TimeoutException TheException)
             {
-                return McpToolResult.Error(TheException.Message);
+                return McpToolResult.Error(TheProgress.CancelAndDescribeTimeout(TheException));
             }
             catch (Exception TheException)
             {
                 return McpToolResult.Error($"Failed to read UI Automation information of window {TheWindow.ToInt64()}: {ExceptionMessageFormatter.FormatWithHResult(TheException)}");
+            }
+            finally
+            {
+                TheProgress.Dispose();
             }
         }
 
