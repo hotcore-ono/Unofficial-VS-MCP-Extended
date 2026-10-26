@@ -33,11 +33,26 @@ namespace WindowListSample
         /// <summary>OpenManyWindowsButton で開く Window の高さ。</summary>
         private const int _MANY_WINDOW_HEIGHT = 100;
 
+        /// <summary>ScrollItemTestListBox に生成する ListBoxItem の数（Height 80 の枠に収まらず、大半が IsOffscreen になる数）。</summary>
+        private const int _LIST_SCROLL_ITEM_COUNT = 40;
+
+        /// <summary>ScrollItemTestDataGrid に生成する行の数（Height 80 の枠に収まらず、大半が IsOffscreen になる数）。</summary>
+        private const int _GRID_SCROLL_ROW_COUNT = 40;
+
         /// <summary>OpenManyWindowsButton で開く Window の 1 つ目をメインウィンドウ左上からずらす量。</summary>
         private const int _MANY_WINDOW_OFFSET_BASE = 40;
 
         /// <summary>OpenManyWindowsButton で開く Window を 1 つずつ重ならないようにずらす量。</summary>
         private const int _MANY_WINDOW_OFFSET_STEP = 20;
+
+        /// <summary>OpenOffscreenTwinButton で開く Window の左上座標（X・Y 共通）。どのモニターにも属さない退避位置で、実運用ログの画面外に退避された WPF 窓と同じ値。</summary>
+        private const int _OFFSCREEN_TWIN_POSITION = -32768;
+
+        /// <summary>OpenOffscreenTwinButton で開く Window の幅。</summary>
+        private const int _OFFSCREEN_TWIN_WIDTH = 300;
+
+        /// <summary>OpenOffscreenTwinButton で開く Window の高さ。</summary>
+        private const int _OFFSCREEN_TWIN_HEIGHT = 120;
 
         /// <summary>ClickTestButton がクリックされた回数。</summary>
         private int _ClickCount;
@@ -74,6 +89,8 @@ namespace WindowListSample
         {
             InitializeComponent();
             CreateScrollItems();
+            CreateListScrollItems();
+            CreateGridScrollRows();
         }
 
         /// <summary>Owner を明示して ShowDialog する。</summary>
@@ -595,6 +612,129 @@ namespace WindowListSample
         {
             _MaskSampleClickCount++;
             LastDialogResultText.Text = $"最後の結果: MaskSampleButton -> clicked {_MaskSampleClickCount}";
+        }
+
+        /// <summary>
+        /// OpenOffscreenTwinButton の Click。メインウィンドウと同じタイトルの Window を画面外（Left = Top = -32768）に開く
+        /// （ui_wait_for_window / ui_capture_window_by_title が、同名候補のうち画面外の窓を除いて画面内の 1 件へ解決することの確認用）。
+        /// メインウィンドウの手前に出ないよう Manual 配置・非アクティブで表示する。画面外の窓なので閉じる操作は
+        /// CloseOffscreenTwinButton への ui_window_click（InvokePattern）で行う。メインウィンドウが閉じたときは一緒に閉じる（画面外の窓でプロセスが残らないように）。
+        /// 開いた窓の HWND（10 進）を結果表示欄へ書く。
+        /// </summary>
+        /// <param name="InSender">イベント送信元。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnOpenOffscreenTwinClick(object InSender, RoutedEventArgs InArgs)
+        {
+            string TheMainTitle = Title;
+            Button TheCloseButton = new Button
+            {
+                Content = "Offscreen Twin を閉じる",
+                Width = 200,
+                Height = 32,
+            };
+            AutomationProperties.SetAutomationId(TheCloseButton, "CloseOffscreenTwinButton");
+            Window TheTwin = new Window
+            {
+                Title = TheMainTitle,
+                Width = _OFFSCREEN_TWIN_WIDTH,
+                Height = _OFFSCREEN_TWIN_HEIGHT,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = _OFFSCREEN_TWIN_POSITION,
+                Top = _OFFSCREEN_TWIN_POSITION,
+                ShowActivated = false,
+                Content = TheCloseButton,
+            };
+            TheCloseButton.Click += (InCloseSender, InCloseArgs) => TheTwin.Close();
+
+            // メインウィンドウが先に閉じられたときは Twin も閉じる（自分で閉じた後は購読を外す）
+            EventHandler TheMainClosedHandler = (InMainSender, InMainArgs) => TheTwin.Close();
+            Closed += TheMainClosedHandler;
+            TheTwin.Closed += (InTwinSender, InTwinArgs) => Closed -= TheMainClosedHandler;
+
+            TheTwin.Show();
+            long TheHandle = new System.Windows.Interop.WindowInteropHelper(TheTwin).Handle.ToInt64();
+            LastDialogResultText.Text = $"最後の結果: OffscreenTwin -> opened {TheHandle}";
+        }
+
+        /// <summary>
+        /// ExpandCollapseTestComboBox の選択が変わったときに、選ばれた項目を結果表示欄へ書く
+        /// （ui_window_click が ExpandCollapsePattern で開いた後に項目を選べること、閉じていても選択結果が読めることの確認用）。
+        /// </summary>
+        /// <param name="InSender">イベント送信元（ExpandCollapseTestComboBox）。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnExpandCollapseTestComboBoxSelectionChanged(object InSender, SelectionChangedEventArgs InArgs)
+        {
+            if (InSender is ComboBox TheComboBox && TheComboBox.SelectedItem is ComboBoxItem TheItem)
+            {
+                LastDialogResultText.Text = $"最後の結果: ExpandCollapseTestComboBox -> {TheItem.Content}";
+            }
+        }
+
+        /// <summary>
+        /// スクロール検証用の ListBoxItem（ListScrollItem01〜ListScrollItem40）を ScrollItemTestListBox に生成する。
+        /// 仮想化を無効にしているため全項目が UIA ツリーに現れ、Height 80 の枠に収まらない項目は IsOffscreen=true になる
+        /// （TextBlock の ScrollItemNN と違い、ListBoxItem は ScrollItemPattern と SelectionItemPattern を持つ）。
+        /// </summary>
+        private void CreateListScrollItems()
+        {
+            for (int TheIndex = 1; TheIndex <= _LIST_SCROLL_ITEM_COUNT; TheIndex++)
+            {
+                string TheItemNumber = TheIndex.ToString("00");
+                ListBoxItem TheItem = new ListBoxItem { Content = $"List Item {TheItemNumber}" };
+                AutomationProperties.SetAutomationId(TheItem, $"ListScrollItem{TheItemNumber}");
+                ScrollItemTestListBox.Items.Add(TheItem);
+            }
+        }
+
+        /// <summary>
+        /// ScrollItemTestDataGrid に行（GridScrollRow01〜GridScrollRow40）を生成する。行の仮想化を無効にしているため全行が UIA ツリーに現れ、
+        /// Height 80 の枠に収まらない行のセルは IsOffscreen=true になる。ScrollItemPattern だけを持つセルに対する
+        /// ui_window_click（ScrollIntoView → 物理クリック）の確認用。セルが実際にどのパターンを持つかは UIA の patterns で確認する。
+        /// </summary>
+        private void CreateGridScrollRows()
+        {
+            List<GridScrollRow> TheRows = new List<GridScrollRow>();
+            for (int TheIndex = 1; TheIndex <= _GRID_SCROLL_ROW_COUNT; TheIndex++)
+            {
+                TheRows.Add(new GridScrollRow($"GridScrollRow{TheIndex.ToString("00")}"));
+            }
+            ScrollItemTestDataGrid.ItemsSource = TheRows;
+        }
+
+        /// <summary>ScrollItemTestDataGrid の行選択が変わったときに、選ばれた行の Name を結果表示欄へ書く。</summary>
+        /// <param name="InSender">イベント送信元（ScrollItemTestDataGrid）。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnScrollItemTestDataGridSelectionChanged(object InSender, SelectionChangedEventArgs InArgs)
+        {
+            if (ScrollItemTestDataGrid.SelectedItem is GridScrollRow TheRow)
+            {
+                LastDialogResultText.Text = $"最後の結果: ScrollItemTestDataGrid -> {TheRow.Name}";
+            }
+        }
+
+        /// <summary>ScrollItemTestListBox の選択が変わったときに、選ばれた項目の AutomationId を結果表示欄へ書く。</summary>
+        /// <param name="InSender">イベント送信元（ScrollItemTestListBox）。</param>
+        /// <param name="InArgs">イベント引数。</param>
+        private void OnScrollItemTestListBoxSelectionChanged(object InSender, SelectionChangedEventArgs InArgs)
+        {
+            if (ScrollItemTestListBox.SelectedItem is ListBoxItem TheItem)
+            {
+                LastDialogResultText.Text = $"最後の結果: ScrollItemTestListBox -> {AutomationProperties.GetAutomationId(TheItem)}";
+            }
+        }
+    }
+
+    /// <summary>ScrollItemTestDataGrid の 1 行分のデータ（読み取り専用の Name だけを持つ）。</summary>
+    public sealed class GridScrollRow
+    {
+        /// <summary>行の名前（GridScrollRow01〜GridScrollRow40）。</summary>
+        public string Name { get; }
+
+        /// <summary>コンストラクタ。</summary>
+        /// <param name="InName">行の名前。</param>
+        public GridScrollRow(string InName)
+        {
+            Name = InName;
         }
     }
 }

@@ -70,12 +70,34 @@ feature/diagnostics-log-fixes（機密マスクの引用符対応・例外メッ
 | Faulty Peer の有効化 | `EnableFaultyPeerCheckBox`（既定 OFF） | なし | OFF の間は `FaultyPeerButton` が通常のボタンとして動く |
 | Invoke が例外を投げるボタン | `FaultyPeerButton` | `LastDialogResultText` | OFF: `最後の結果: FaultyPeerButton -> clicked N`。ON: `InvokePattern.Invoke` が `COMException`（HRESULT `0x80041234`）を投げ、`ui_window_click` がエラーを返す（表示は変わらない） |
 | 機密マスク対象語を Name に含むボタン | `MaskSampleButton`（Name は `token=visible`） | `LastDialogResultText` | `最後の結果: MaskSampleButton -> clicked N` |
+| ExpandCollapsePattern で開閉する ComboBox | `ExpandCollapseTestComboBox`（項目は `Combo Item A` / `B` / `C`。初期は未選択） | `LastDialogResultText` | `ui_window_click` は Invoke / SelectionItem / Toggle を持たないため `method=expandCollapsePattern`（閉じていれば `action=expand`）。項目を選ぶと `最後の結果: ExpandCollapseTestComboBox -> Combo Item X` |
+| 行（セル）を画面外に持つ読み取り専用 DataGrid | `ScrollItemTestDataGrid`（Height 80、行 `GridScrollRow01`〜`GridScrollRow40`、列は `Name`） | `LastDialogResultText` | 行を選ぶと `最後の結果: ScrollItemTestDataGrid -> GridScrollRowNN`。セルのパターンは実機で `ui_window_find_elements` の `patterns` を見て確認する |
+| ScrollItemPattern と SelectionItemPattern を持つ項目を画面外に持つ ListBox | `ScrollItemTestListBox`（Height 80、仮想化なし）の `ListScrollItem01`〜`ListScrollItem40` | `LastDialogResultText` | 項目を選ぶと `最後の結果: ScrollItemTestListBox -> ListScrollItemNN`。枠に収まらない項目は `IsOffscreen=true` で、`patterns` に `selectionItem` と `scrollItem` が出る |
 
 補足:
 
 - `FaultyPeerButton` は `AutomationPeer`（`FaultyPeerButtonAutomationPeer`）を差し替えており、例外を投げるのは `IInvokeProvider.Invoke` だけ。`Name` などのプロパティ取得では投げない（検索走査の途中で投げると、走査側が例外を握りつぶして兄弟要素が見えなくなるため）。
 - 機密マスクの確認は、`ui_window_click` に存在しない名前（例 `token=abc`）を渡し、`diagnostics_export` の tool.end の errorMessage が `'token=***' not found …` になることを見る（Tool の応答そのものは伏せられない。伏せられるのは診断ログだけ）。`ui_window_find_elements` は該当なしのときエラーではなく success（count=0）を返すので、この確認には使えない。
 - 引用符まわりの確認例として、値の途中に単引用符を含む `password=ab'cd` も渡す。errorMessage が `Element with Name 'password=***' not found …` になり、`cd` のような後半が平文で残らないこと。
+- `ScrollItemTestDataGrid` は読み取り専用の `DataGrid`（`SelectionUnit=FullRow`、`SelectionMode=Single`、行の仮想化なし、列は `Name` の 1 つ、Height 80）で、行は `GridScrollRow01`〜`GridScrollRow40`。「`SelectionItemPattern` を持たず `ScrollItemPattern` だけを持つセル」に対して、`ui_window_click` が `ScrollIntoView` → 物理クリックへ進む経路を確認する狙い。ただし WPF のセルが実際にどのパターンを持つか（`patterns` に何が出るか）は実機で確認する前提で、ここでは断定しない。行が選ばれると結果表示欄が `ScrollItemTestDataGrid -> GridScrollRowNN` になる。`ScrollIntoView` を経由して物理クリックが成功したときは、`ui_window_click` の戻り値に `scrolledIntoView: true` が付く。スクロール直後に座標が落ち着かなかったときは、物理クリックせず `geometry did not settle within 200 ms after ScrollIntoView` のエラーになる。
+- `ScrollItemTestListBox` の項目は `ListBoxItem` で `SelectionItemPattern` も持つため、`ui_window_click` は（画面外の項目でも）先に `selectionItemPattern` で選ぶ。物理クリックの前の `ScrollIntoView` に入るのは、SelectionItem で選べなかった（パターン非対応・選択が変わらない）画面外の要素だけ。
+- 既存の `ScrollItem40`（`TextBlock`）は `ScrollItemPattern` を持たない。クリックしても `ScrollIntoView` されず、従来どおり offscreen のエラー（`... is offscreen (IsOffscreen=true); scroll it into view first`）になる。「ScrollItemPattern を持たない要素では従来のエラーのまま」の失敗系の確認に使う。
+
+## 画面外の同名ウィンドウの確認用 UI（MainWindow 4 列目の下部）
+
+`ui_wait_for_window` / `ui_capture_window_by_title` がタイトル一致の候補から画面外の窓を除いて解決することを実機で確認するための UI。既存の画面・AutomationId は変えていない。
+
+| 操作 | 操作対象 AutomationId | 結果表示 AutomationId | 期待する表示 |
+|---|---|---|---|
+| メインと同じタイトルの窓を画面外に開く | `OpenOffscreenTwinButton` | `LastDialogResultText` | `最後の結果: OffscreenTwin -> opened N`（N は開いた窓の HWND の 10 進値）。押すたびに 1 つ増える |
+| 画面外の窓を閉じる | Twin 窓の中の `CloseOffscreenTwinButton`（`ui_list_windows` で Twin の handle を取り、`ui_window_click` で操作） | なし | その Twin だけが閉じる |
+
+補足:
+
+- Twin は Title が `WindowListSample Main`（メインと同じ）、`Left = Top = -32768`、`WindowStartupLocation = Manual`、`ShowActivated = false`、Owner なしの `Window`（300 × 120）で、メインの手前には出ない。どのモニターにも属さないため `MonitorFromWindow(MONITOR_DEFAULTTONULL)` が 0 を返す。
+- `ui_list_windows` には Twin も出る（一覧は絞り込まない）。`ui_wait_for_window(title="WindowListSample Main")` や `ui_capture_window_by_title` は、画面内のメインウィンドウ 1 件に解決する（Twin を開く前と同じ結果）。
+- Twin は画面外にあるため `CloseOffscreenTwinButton` を物理クリックできない。`ui_window_click` は InvokePattern で閉じる（座標を使わない）。
+- メインウィンドウを閉じると Twin も一緒に閉じる（画面外の窓だけが残ってプロセスが終了しなくなるのを防ぐため）。
 
 ## 使い方（Experimental Instance での検証手順）
 

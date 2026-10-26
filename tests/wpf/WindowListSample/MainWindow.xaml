@@ -111,6 +111,22 @@
         <local:FaultyPeerButton AutomationProperties.AutomationId="FaultyPeerButton" Content="Faulty Peer Button" Width="280" Height="30"
                                 IsFaultEnabled="{Binding IsChecked, ElementName=EnableFaultyPeerCheckBox}" Click="OnFaultyPeerButtonClick" />
         <Button AutomationProperties.AutomationId="MaskSampleButton" Content="token=visible" Width="280" Height="30" Margin="0,8,0,0" Click="OnMaskSampleClick" />
+        <Button AutomationProperties.AutomationId="OpenOffscreenTwinButton" Content="Offscreen Twin を開く" Width="280" Height="30" Margin="0,8,0,0" Click="OnOpenOffscreenTwinClick" />
+        <ComboBox AutomationProperties.AutomationId="ExpandCollapseTestComboBox" Width="280" Height="30" Margin="0,8,0,0"
+                  SelectionChanged="OnExpandCollapseTestComboBoxSelectionChanged">
+            <ComboBoxItem Content="Combo Item A" />
+            <ComboBoxItem Content="Combo Item B" />
+            <ComboBoxItem Content="Combo Item C" />
+        </ComboBox>
+        <ListBox x:Name="ScrollItemTestListBox" AutomationProperties.AutomationId="ScrollItemTestListBox" Width="280" Height="80" Margin="0,8,0,0"
+                 VirtualizingPanel.IsVirtualizing="False" SelectionChanged="OnScrollItemTestListBoxSelectionChanged" />
+        <DataGrid x:Name="ScrollItemTestDataGrid" AutomationProperties.AutomationId="ScrollItemTestDataGrid" Width="280" Height="80" Margin="0,8,0,0"
+                  IsReadOnly="True" SelectionUnit="FullRow" SelectionMode="Single" EnableRowVirtualization="False" AutoGenerateColumns="False"
+                  SelectionChanged="OnScrollItemTestDataGridSelectionChanged">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name, Mode=OneWay}" Width="*" />
+            </DataGrid.Columns>
+        </DataGrid>
     </StackPanel>
     </StackPanel>
 </Window>
